@@ -21,6 +21,7 @@ scout <space> setup   [--agent cursor|pi|opencode] [--force]
 scout <space> reindex [--force]
 scout <space> search  <query> [--top-k N]
 scout serve
+scout stop-serve
 ```
 
 | Command | Example |
@@ -32,6 +33,7 @@ scout serve
 | Search (no serve needed) | `scout myapp search "auth handler"` |
 | Search, limit results | `scout myapp search "handler" --top-k 5` |
 | Start API for agents | `scout serve` |
+| Stop API server | `scout stop-serve` |
 
 **Common mistake:**
 
@@ -46,7 +48,7 @@ See `scope/scout-simple-mvp1.md` for full MVP1 requirements.
 
 ## Dev setup
 
-Python 3.11+ required. Python 3.14 needs ABI3 forward-compat flag at build time.
+Python 3.11+ required. Python 3.14 needs `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` at build time (abi3 wheels target 3.11+).
 
 ```bash
 # Clone and enter repo
@@ -68,13 +70,31 @@ pytest -q
 scout
 ```
 
-### Interactive setup
+### Interactive setup (4-branch wizard)
 
 ```bash
-scout myapp setup --agent cursor
+scout myapp setup
+# or non-interactive agent: scout myapp setup --agent cursor
 ```
 
-Flow: workspace root → embed provider → model pick → prescan → index → optional skill install.
+Every setup run:
+
+1. **Scout API base URL** — full URL e.g. `http://127.0.0.1:8741/v1` (LAN IP supported; warns if non-loopback)
+2. **Branch** — pick one of four paths:
+
+| Branch | Files | Embed |
+|--------|-------|-------|
+| 1 | Local path | Local LLM (lmstudio / omlx / unsloth-studio) |
+| 2 | Local path | OpenRouter |
+| 3 | Git clone → cwd subdir | Local LLM |
+| 4 | Git clone → cwd subdir | OpenRouter |
+
+3. Workspace resolution (local root or `git clone --depth 1`)
+4. Embed provider + model (API key prompt offers **leave blank to keep** if key exists)
+5. Prescan → index
+6. Agent selection (cursor / pi / opencode) + skill install with injected `scout_api`
+
+`--agent` skips agent prompt for CI. Skill install runs every successful setup.
 
 ### Search without serve (pyo3 direct)
 
@@ -86,6 +106,7 @@ scout myapp search "error handling"
 
 ```bash
 scout serve
+scout stop-serve   # from another terminal
 # POST http://127.0.0.1:8741/v1/spaces/myapp/search
 ```
 
@@ -93,28 +114,33 @@ scout serve
 
 ```
 scout_core/          # Rust engine (pyo3)
-scout/               # Python CLI, API, embed, prescan, skill
+scout/               # Python CLI, API, embed, prescan, skill, setup
 skills/search_scout/ # Agent skill template
 openspec/            # Change specs and tasks
 ```
 
 ## Remaining tasks (MVP1)
 
-From `openspec/changes/scout-simple-mvp1/tasks.md` — 86/88 complete.
+All 88 MVP1 tasks complete. Archive with `/opsx:archive scout-simple-mvp1`.
 
-| Task | Description |
-|------|-------------|
-| 16.2 | Configure PyPI publish for `scout` package with bundled `scout_core` wheels |
-| 16.3 | Verify `pipx install scout` works on clean machine |
+## Distribution
 
-All other MVP1 tasks are implemented. Archive change after distribution is done.
-
-## Distribution (not yet wired)
-
-Target install path:
+Install (after PyPI release):
 
 ```bash
 pipx install scout
 ```
 
-CI builds wheels on push (`.github/workflows/ci.yml`); PyPI publish step pending (task 16.2).
+Publish flow (maintainers):
+
+1. Configure PyPI trusted publisher for `Publish` workflow, **or** set repo secret `PYPI_API_TOKEN`
+2. Tag release: `git tag v0.1.0 && git push origin v0.1.0`
+3. GitHub Actions `.github/workflows/publish.yml` builds multi-platform wheels (bundled `scout_core`) + sdist, uploads to PyPI
+
+Verify local wheel + pipx (clean-machine simulation):
+
+```bash
+bash scripts/verify_pipx_install.sh
+```
+
+CI builds wheels on every push/PR (`.github/workflows/ci.yml`).

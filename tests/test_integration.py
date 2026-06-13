@@ -96,8 +96,33 @@ def test_skill_install_project_cursor(tmp_path: Path) -> None:
         )
     assert len(dests) == 1
     content = dests[0].joinpath("SKILL.md").read_text(encoding="utf-8")
-    assert "8741" in content
+    assert "http://127.0.0.1:8741/v1" in content
     assert "test" in content
+
+
+def test_skill_install_custom_api_url(tmp_path: Path) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    with patch("scout.skill.install.skill_template_path") as mock_tpl:
+        tpl = tmp_path / "template"
+        tpl.mkdir()
+        (tpl / "SKILL.md").write_text(
+            "scout_api: {{SCOUT_API}}\ndefault_space: {{DEFAULT_SPACE}}",
+            encoding="utf-8",
+        )
+        mock_tpl.return_value = tpl
+        dests = install_skill(
+            "cursor",
+            global_install=True,
+            project_install=False,
+            project_root=project,
+            scout_api="http://10.0.0.5:9000/v1",
+            default_space="remote",
+            force=True,
+        )
+    content = dests[0].joinpath("SKILL.md").read_text(encoding="utf-8")
+    assert "http://10.0.0.5:9000/v1" in content
+    assert "remote" in content
 
 
 @pytest.mark.skipif(

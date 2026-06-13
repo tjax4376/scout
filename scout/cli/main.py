@@ -11,10 +11,8 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 import scout_core
-import httpx
 import typer
 import uvicorn
 from rich.console import Console
@@ -22,11 +20,7 @@ from rich.json import JSON
 
 from scout.api.app import create_app
 from scout.config import (
-    EmbedConfig,
-    ScoutConfig,
-    SpaceEntry,
     bootstrap_scout_dir,
-    embed_api_key_secret,
     get_embed_api_key,
     graph_bin_path,
     index_db_path,
@@ -35,36 +29,23 @@ from scout.config import (
     manifest_path,
     pid_path,
     prescan_path,
-    register_space,
-    save_config,
-    save_secrets,
     scout_home,
     validate_embed,
     validate_space,
 )
-from scout.embed.registry import (
-    DEFAULT_PORTS,
-    LOCAL_PROVIDER_WARNING,
-    build_provider,
-    filter_embed_models,
-    find_free_api_port,
-    is_local_provider,
-    scan_local_endpoint,
-)
+from scout.embed.registry import build_provider
 from scout.indexing import run_reindex
-from scout.prescan.runner import (
-    check_byte_cap,
-    check_capacity,
-    display_prescan_table,
-    run_prescan,
-    write_prescan_json,
-)
-from scout.skill.install import install_skill
+from scout.prescan.runner import check_byte_cap, check_capacity, run_prescan
+from scout.setup.api_url import build_scout_api_url, parse_api_base_url
+from scout.setup.runner import run_setup
+from scout.serve.lifecycle import stop_serve
 
 console = Console()
 
 
 def _home() -> Path:
+    from scout.config import scout_home
+
     return scout_home()
 
 
@@ -81,146 +62,13 @@ def _usage() -> None:
         "  scout <space> reindex [--force]\n"
         "  scout <space> search <query> [--top-k N]\n"
         "  scout serve\n"
+        "  scout stop-serve\n"
         "\n"
         "Examples:\n"
         "  scout myapp setup --agent cursor\n"
-        "  scout myapp search \"auth handler\""
+        "  scout myapp search \"auth handler\"\n"
+        "  scout stop-serve"
     )
-
-
-async def _setup_async(
-    space: str,
-    agent: str | None,
-    force: bool,
-) -> None:
-    home = bootstrap_scout_dir()
-    config = load_config(home)
-
-    root = typer.prompt("Workspace root path", default=str(Path.cwd()))
-    root_path = Path(root).expanduser().resolve()
-    if not root_path.is_dir():
-        console.print(f"[red]invalid root: {root_path}[/red]")
-        sys.exit(1)
-
-    provider_name = typer.prompt("Embed provider", default="lmstudio")
-    if provider_name not in {"openrouter", "lmstudio", "omlx", "unsloth-studio"}:
-        console.print("[red]invalid provider[/red]")
-        sys.exit(1)
-
-    secrets = load_secrets(home)
-    endpoint = ""
-    if provider_name == "openrouter":
-        api_key = secrets.get("openrouter_api_key") or typer.prompt(
-            "OpenRouter API key", hide_input=True
-        )
-        secrets["openrouter_api_key"] = api_key
-        save_secrets(home, secrets)
-        provider = build_provider("openrouter", api_key=api_key)
-    else:
-        if is_local_provider(provider_name):
-            console.print(f"[yellow]{LOCAL_PROVIDER_WARNING}[/yellow]")
-        secret_key = embed_api_key_secret(provider_name)
-        api_key = get_embed_api_key(secrets, provider_name) or typer.prompt(
-            "Embed API key (required if server uses auth; Enter to skip)",
-            default="",
-            hide_input=True,
-        )
-        if api_key:
-            secrets[secret_key] = api_key
-            save_secrets(home, secrets)
-        default_port = DEFAULT_PORTS.get(provider_name, 1234)
-        start = int(typer.prompt("Port range start", default=str(default_port)))
-        end = int(typer.prompt("Port range end", default=str(start + 6)))
-        found = await scan_local_endpoint("127.0.0.1", start, end, api_key=api_key or None)
-        if not found:
-            manual = typer.prompt("Manual endpoint URL (or empty to abort)", default="")
-            if not manual:
-                console.print("[red]no endpoint found[/red]")
-                sys.exit(1)
-            found = manual.rstrip("/")
-            if not found.endswith("/v1"):
-                found = f"{found}/v1"
-        endpoint = found
-        provider = build_provider(
-            provider_name,
-            endpoint=endpoint,
-            api_key=api_key or None,
-        )
-
-    try:
-        models = await provider.list_models()
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 401 and is_local_provider(provider_name):
-            console.print("[yellow]Server returned 401 — API key required[/yellow]")
-            secret_key = embed_api_key_secret(provider_name)
-            api_key = typer.prompt("Embed API key", hide_input=True)
-            secrets[secret_key] = api_key
-            save_secrets(home, secrets)
-            provider = build_provider(
-                provider_name,
-                endpoint=endpoint,
-                api_key=api_key,
-            )
-            models = await provider.list_models()
-        else:
-            raise
-    embed_models = await filter_embed_models(provider, models)
-    if not embed_models:
-        console.print("[red]no embed-capable models found[/red]")
-        sys.exit(1)
-    console.print("Models:")
-    for i, m in enumerate(embed_models[:20]):
-        console.print(f"  [{i}] {m}")
-    idx = int(typer.prompt("Select model index", default="0"))
-    model = embed_models[idx]
-    dims = await provider.probe_dimensions(model)
-
-    entry = SpaceEntry(name=space, root=str(root_path))
-    register_space(home, entry, config)
-    config.embed = EmbedConfig(
-        provider=provider_name,
-        model=model,
-        endpoint=endpoint,
-        dimensions=dims,
-    )
-    if config.api_port < 8741:
-        config.api_port = find_free_api_port()
-    save_config(home, config)
-
-    prescan = run_prescan(root_path, entry.skip_globs, entry.skip_paths)
-    display_prescan_table(console, prescan)
-    check_byte_cap(prescan, force=force)
-    check_capacity(prescan)
-    write_prescan_json(prescan_path(home, space), prescan)
-    if not typer.confirm("Proceed with indexing?", default=True):
-        sys.exit(0)
-
-    try:
-        version = await run_reindex(home, space, config, provider, console=console)
-    except Exception as exc:
-        console.print(f"[red]setup failed: {exc}[/red]")
-        sys.exit(1)
-    console.print(f"[green]Indexed space '{space}' (version {version})[/green]")
-
-    if agent:
-        scope = typer.prompt("Install skill: global / project / both", default="both")
-        g = scope in {"global", "both"}
-        p = scope in {"project", "both"}
-        api = f"http://127.0.0.1:{config.api_port}/v1"
-        try:
-            paths = install_skill(
-                agent,
-                global_install=g,
-                project_install=p,
-                project_root=root_path,
-                scout_api=api,
-                default_space=space,
-                force=force,
-            )
-            for path in paths:
-                console.print(f"[green]Skill installed: {path}[/green]")
-        except FileExistsError as exc:
-            console.print(f"[yellow]{exc}[/yellow]")
 
 
 def _parse_flags(argv: list[str]) -> tuple[list[str], bool, str | None, int]:
@@ -254,6 +102,8 @@ def main(argv: list[str] | None = None) -> None:
     if args[0] == "serve":
         home = bootstrap_scout_dir()
         config = load_config(home)
+        api_url = build_scout_api_url(config)
+        endpoint = parse_api_base_url(api_url)
         pid_file = pid_path(home)
         if pid_file.exists():
             existing = pid_file.read_text(encoding="utf-8").strip()
@@ -261,11 +111,28 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
         pid_file.write_text(str(os.getpid()), encoding="utf-8")
         try:
-            console.print(f"[green]Serving on http://127.0.0.1:{config.api_port}[/green]")
-            uvicorn.run(create_app(), host="127.0.0.1", port=config.api_port, log_level="info")
+            console.print(f"[green]Serving on {api_url}[/green]")
+            uvicorn.run(
+                create_app(),
+                host=endpoint.host,
+                port=endpoint.port,
+                log_level="info",
+            )
         finally:
             if pid_file.exists():
                 pid_file.unlink()
+        return
+
+    if args[0] == "stop-serve":
+        home = scout_home()
+        result = stop_serve(home)
+        if result.status == "stopped":
+            console.print(f"[green]{result.message}[/green]")
+        elif result.status == "failed":
+            console.print(f"[red]{result.message}[/red]")
+            sys.exit(1)
+        else:
+            console.print(f"[yellow]{result.message}[/yellow]")
         return
 
     positional, force, agent, top_k = _parse_flags(args)
@@ -278,7 +145,9 @@ def main(argv: list[str] | None = None) -> None:
     _require_core()
 
     if cmd == "setup":
-        asyncio.run(_setup_async(space, agent, force))
+        asyncio.run(
+            run_setup(space, agent_override=agent, force=force, console=console)
+        )
     elif cmd == "reindex":
         home = _home()
         config = load_config(home)

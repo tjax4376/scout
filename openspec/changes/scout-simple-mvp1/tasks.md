@@ -123,8 +123,8 @@
 ## 16. CI and Distribution
 
 - [x] 16.1 Configure CI pipeline for multi-platform maturin wheel build (Linux, macOS, Windows)
-- [ ] 16.2 Configure PyPI publish for `scout` package with bundled `scout_core` wheels
-- [ ] 16.3 Verify `pipx install scout` works on clean machine
+- [x] 16.2 Configure PyPI publish for `scout` package with bundled `scout_core` wheels
+- [x] 16.3 Verify `pipx install scout` works on clean machine
 - [x] 16.4 Add `.gitignore` entries for `.scout/`, `secrets.yaml`, build artifacts
 
 ## 17. Integration Testing

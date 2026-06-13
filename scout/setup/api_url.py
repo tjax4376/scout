@@ -1,0 +1,141 @@
+"""Scout API base URL helpers.
+
+Metadata: v0.1.0 | Scout Contributors | 2026-06-12
+"""
+
+from __future__ import annotations
+
+import re
+import socket
+from dataclasses import dataclass
+from urllib.parse import urlparse
+
+from scout.config import DEFAULT_API_PORT_START, ScoutConfig
+
+DEFAULT_API_BASE_URL = f"http://127.0.0.1:{DEFAULT_API_PORT_START}/v1"
+API_PORT_RANGE_END = 8799
+
+
+@dataclass(frozen=True)
+class ApiEndpoint:
+    scheme: str
+    host: str
+    port: int
+
+
+def normalize_api_base_url(raw: str) -> str:
+    """Validate and normalize Scout API base URL to scheme://host:port/v1."""
+    text = raw.strip().rstrip("/")
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("API URL must use http or https scheme")
+    if not parsed.hostname:
+        raise ValueError("API URL must include host")
+    if parsed.port is None:
+        raise ValueError("API URL must include explicit port")
+    path = parsed.path.rstrip("/") or ""
+    if path != "/v1":
+        raise ValueError("API URL path must be /v1")
+    return f"{parsed.scheme}://{parsed.hostname}:{parsed.port}/v1"
+
+
+def parse_api_base_url(url: str) -> ApiEndpoint:
+    """Parse normalized api_base_url into bind endpoint."""
+    normalized = normalize_api_base_url(url)
+    parsed = urlparse(normalized)
+    assert parsed.hostname is not None
+    assert parsed.port is not None
+    return ApiEndpoint(
+        scheme=parsed.scheme,
+        host=parsed.hostname,
+        port=parsed.port,
+    )
+
+
+def build_scout_api_url(config: ScoutConfig) -> str:
+    """Return canonical Scout API base URL from config."""
+    if config.api_base_url:
+        return normalize_api_base_url(config.api_base_url)
+    return f"http://127.0.0.1:{config.api_port}/v1"
+
+
+def migrate_api_base_url(config: ScoutConfig) -> None:
+    """Ensure api_base_url is set; derive from api_port if missing."""
+    if not config.api_base_url:
+        config.api_base_url = f"http://127.0.0.1:{config.api_port}/v1"
+
+
+def update_api_base_url_port(config: ScoutConfig, port: int) -> None:
+    """Update api_base_url and api_port after port reassignment."""
+    endpoint = parse_api_base_url(build_scout_api_url(config))
+    config.api_port = port
+    config.api_base_url = f"{endpoint.scheme}://{endpoint.host}:{port}/v1"
+
+
+def _port_open(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        return sock.connect_ex((host, port)) == 0
+
+
+def find_free_api_port_on_host(
+    host: str,
+    start: int = DEFAULT_API_PORT_START,
+    end: int = API_PORT_RANGE_END,
+) -> int:
+    """Find first free port on host in range."""
+    for port in range(start, end + 1):
+        if not _port_open(host, port):
+            return port
+    raise RuntimeError(f"no free API port found on {host} in range {start}-{end}")
+
+
+def ensure_api_port_available(config: ScoutConfig) -> None:
+    """If configured port busy on host, scan and update config URL."""
+    endpoint = parse_api_base_url(build_scout_api_url(config))
+    if not _port_open(endpoint.host, endpoint.port):
+        return
+    new_port = find_free_api_port_on_host(
+        endpoint.host,
+        start=endpoint.port,
+        end=API_PORT_RANGE_END,
+    )
+    update_api_base_url_port(config, new_port)
+
+
+_GIT_URL_RE = re.compile(r"^(https?|git|ssh)://", re.IGNORECASE)
+_SSH_GIT_RE = re.compile(r"^git@[\w.-]+:")
+
+
+def validate_git_url(url: str) -> str:
+    """Validate git remote URL scheme."""
+    text = url.strip()
+    if _GIT_URL_RE.match(text) or _SSH_GIT_RE.match(text):
+        return text
+    raise ValueError("git URL must use https, git, ssh, or git@host:path form")
+
+
+def validate_subdir_name(name: str) -> str:
+    """Reject unsafe subdirectory names."""
+    text = name.strip()
+    if not text or text in {".", ".."}:
+        raise ValueError("invalid subdirectory name")
+    if "/" in text or "\\" in text or ".." in text:
+        raise ValueError("subdirectory name must be a single path segment")
+    if re.search(r"[`$;|&<>]", text):
+        raise ValueError("subdirectory name contains unsafe characters")
+    return text
+
+
+def repo_name_from_url(url: str) -> str:
+    """Derive default clone directory name from git URL."""
+    text = url.strip().rstrip("/")
+    if ":" in text and "@" in text.split(":")[0]:
+        # git@host:org/repo.git
+        tail = text.split(":", 1)[-1]
+    else:
+        tail = urlparse(text).path or text.split("/")[-1]
+    name = tail.rsplit("/", 1)[-1]
+    if name.endswith(".git"):
+        name = name[:-4]
+    return name or "repo"

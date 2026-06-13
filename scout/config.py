@@ -35,6 +35,7 @@ class SpaceEntry:
 @dataclass
 class ScoutConfig:
     api_port: int = DEFAULT_API_PORT_START
+    api_base_url: str = ""
     spaces: dict[str, SpaceEntry] = field(default_factory=dict)
     embed: EmbedConfig = field(default_factory=EmbedConfig)
 
@@ -121,8 +122,13 @@ def load_config(home: Path) -> ScoutConfig:
             skip_globs=list(entry.get("skip", {}).get("globs", []) or []),
             skip_paths=list(entry.get("skip", {}).get("paths", []) or []),
         )
+    api_port = int(data.get("api_port", DEFAULT_API_PORT_START))
+    api_base_url = str(data.get("api_base_url", "") or "")
+    if not api_base_url:
+        api_base_url = f"http://127.0.0.1:{api_port}/v1"
     return ScoutConfig(
-        api_port=int(data.get("api_port", DEFAULT_API_PORT_START)),
+        api_port=api_port,
+        api_base_url=api_base_url,
         spaces=spaces,
         embed=embed,
     )
@@ -131,6 +137,7 @@ def load_config(home: Path) -> ScoutConfig:
 def save_config(home: Path, config: ScoutConfig) -> None:
     payload: dict[str, Any] = {
         "api_port": config.api_port,
+        "api_base_url": config.api_base_url,
         "embed": {
             "provider": config.embed.provider,
             "model": config.embed.model,

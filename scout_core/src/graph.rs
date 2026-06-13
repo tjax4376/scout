@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
 use crate::chunk::{chunk_file, chunk_symbol};
@@ -219,7 +220,7 @@ pub fn build_graph_and_chunks(
             let _ = graph.add_edge(&dir_nodes[""], &file_id, EdgeKind::Contains);
         }
 
-        let symbols = extract_symbols(Path::new(&file.rel_path), &source)?;
+        let symbols = extract_symbols(Path::new(&file.rel_path), &source).unwrap_or_default();
         if symbols.is_empty() {
             let file_chunks = chunk_file(space, &file.rel_path, &source);
             for c in &file_chunks {
@@ -507,7 +508,8 @@ pub fn save_graph(path: &Path, snapshot: &GraphSnapshot) -> ScoutResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let bytes = bincode::serialize(snapshot)?;
+    let bytes = bincode::serialize(snapshot)
+        .map_err(|e| ScoutError::Other(format!("serialize graph: {e}")))?;
     fs::write(path, bytes)?;
     Ok(())
 }
@@ -515,6 +517,7 @@ pub fn save_graph(path: &Path, snapshot: &GraphSnapshot) -> ScoutResult<()> {
 /// Load graph from disk.
 pub fn load_graph(path: &Path) -> ScoutResult<CodeGraph> {
     let bytes = fs::read(path)?;
-    let snapshot: GraphSnapshot = bincode::deserialize(&bytes)?;
+    let snapshot: GraphSnapshot = bincode::deserialize(&bytes)
+        .map_err(|e| ScoutError::Other(format!("deserialize graph: {e}")))?;
     Ok(CodeGraph::load_from_snapshot(&snapshot))
 }

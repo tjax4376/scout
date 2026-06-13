@@ -1,19 +1,26 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use rusqlite::auto_extension::{register_auto_extension, RawAutoExtension};
 use rusqlite::{params, Connection};
 use sqlite_vec::sqlite3_vec_init;
-use zerocopy::AsBytes;
+use zerocopy::IntoBytes;
 
 use crate::error::{ScoutError, ScoutResult};
 use crate::types::{ChunkData, NodeKind};
 
 const SCHEMA_VERSION: &str = "1";
 
+/// vec0 TEXT metadata columns reject NULL — use empty string.
+fn symbol_for_db(symbol: Option<&str>) -> &str {
+    symbol.filter(|s| !s.is_empty()).unwrap_or("")
+}
+
 /// Register sqlite-vec extension with bundled SQLite.
 fn register_vec_extension() -> ScoutResult<()> {
     unsafe {
-        let raw_ext: RawAutoExtension = std::mem::transmute(sqlite3_vec_init as usize);
+        let raw_ext: RawAutoExtension =
+            std::mem::transmute(sqlite3_vec_init as *const () as usize);
         register_auto_extension(raw_ext)
             .map_err(|e| ScoutError::Index(e.to_string()))?;
     }
@@ -88,8 +95,18 @@ pub fn insert_chunks(
             "chunks and embeddings length mismatch".into(),
         ));
     }
-    let tx = conn.unchecked_transaction()?;
+    // vec0 rejects duplicate primary keys; query can emit duplicate symbols per file.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut deduped_chunks: Vec<&ChunkData> = Vec::new();
+    let mut deduped_emb: Vec<&Vec<f32>> = Vec::new();
     for (chunk, emb) in chunks.iter().zip(embeddings.iter()) {
+        if seen.insert(chunk.node_id.clone()) {
+            deduped_chunks.push(chunk);
+            deduped_emb.push(emb);
+        }
+    }
+    let tx = conn.unchecked_transaction()?;
+    for (chunk, emb) in deduped_chunks.iter().zip(deduped_emb.iter()) {
         tx.execute(
             "INSERT OR REPLACE INTO chunks
              (node_id, kind, rel_path, symbol, start_line, end_line, text, embedding)
@@ -98,7 +115,7 @@ pub fn insert_chunks(
                 chunk.node_id,
                 chunk.kind.as_str(),
                 chunk.rel_path,
-                chunk.symbol,
+                symbol_for_db(chunk.symbol.as_deref()),
                 chunk.start_line,
                 chunk.end_line,
                 chunk.text,
@@ -227,5 +244,46 @@ pub fn read_meta(conn: &Connection, key: &str) -> ScoutResult<Option<String>> {
         Ok(v) => Ok(Some(v)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(ScoutError::Sqlite(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ChunkData, NodeKind};
+
+    #[test]
+    fn insert_chunk_with_null_symbol() {
+        let dir = std::env::temp_dir().join(format!(
+            "scout-index-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("test.db");
+        let conn = open_index(&db).unwrap();
+        prepare_index(&conn, "test-model", 4).unwrap();
+        let chunk = ChunkData {
+            node_id: "abc123".into(),
+            text: "file content".into(),
+            kind: NodeKind::File,
+            rel_path: "readme.md".into(),
+            symbol: None,
+            start_line: 1,
+            end_line: 10,
+        };
+        let chunk_dup = ChunkData {
+            text: "duplicate".into(),
+            ..chunk.clone()
+        };
+        insert_chunks(
+            &conn,
+            &[chunk, chunk_dup],
+            &[vec![0.1, 0.2, 0.3, 0.4], vec![0.9, 0.8, 0.7, 0.6]],
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -19,3 +19,24 @@
 - `scout serve` manual foreground; port scan from 8741
 
 **Ref:** `scope/scout-simple-mvp1.md`
+
+## 2026-06-12 — MVP1 implementation (opsx-apply)
+
+**Issue:** Greenfield build from OpenSpec tasks — 88 items across Rust core + Python shell.
+
+**Resolution:**
+- `scout_core` Rust engine compiles; pyo3 bindings exposed
+- Python CLI/API/embed/prescan/skill implemented
+- `maturin develop` works (Python 3.14 needs `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`)
+- 8 pytest + 2 cargo tests pass
+- **Remaining:** PyPI publish (16.2), `pipx install` clean-machine verify (16.3)
+
+**Dev setup:**
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install maturin pytest pytest-asyncio httpx pyyaml rich typer fastapi uvicorn
+PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release
+pytest -q
+```
+
+**Local embed auth:** LM Studio etc may require API key. Setup prompts before model fetch; stored as `lmstudio_api_key` in `secrets.yaml`. Env: `LMSTUDIO_API_KEY`.

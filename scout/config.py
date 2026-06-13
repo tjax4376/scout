@@ -149,15 +149,30 @@ def save_config(home: Path, config: ScoutConfig) -> None:
     )
 
 
+def embed_api_key_secret(provider: str) -> str:
+    """secrets.yaml key for a provider's embed API key."""
+    return f"{provider.replace('-', '_')}_api_key"
+
+
+def get_embed_api_key(secrets: dict[str, str], provider: str) -> str | None:
+    key = secrets.get(embed_api_key_secret(provider))
+    return key if key else None
+
+
 def load_secrets(home: Path) -> dict[str, str]:
-    env_key = os.environ.get("OPENROUTER_API_KEY")
-    if env_key:
-        return {"openrouter_api_key": env_key}
+    secrets: dict[str, str] = {}
     path = secrets_path(home)
-    if not path.exists():
-        return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return {str(k): str(v) for k, v in data.items()}
+    if path.exists():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        secrets = {str(k): str(v) for k, v in data.items()}
+
+    if os.environ.get("OPENROUTER_API_KEY"):
+        secrets["openrouter_api_key"] = os.environ["OPENROUTER_API_KEY"]
+    for provider in ("lmstudio", "omlx", "unsloth-studio"):
+        env_name = f"{provider.upper().replace('-', '_')}_API_KEY"
+        if os.environ.get(env_name):
+            secrets[embed_api_key_secret(provider)] = os.environ[env_name]
+    return secrets
 
 
 def save_secrets(home: Path, secrets: dict[str, str]) -> None:

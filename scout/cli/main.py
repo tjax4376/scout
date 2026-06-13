@@ -1,6 +1,7 @@
 """Scout CLI — setup, reindex, search, serve.
 
 Metadata: v0.1.0 | Scout Contributors | 2026-06-12
+Command shape: `scout <space> setup|reindex|search` and `scout serve`.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 import scout_core
+import httpx
 import typer
 import uvicorn
 from rich.console import Console
@@ -24,6 +26,8 @@ from scout.config import (
     ScoutConfig,
     SpaceEntry,
     bootstrap_scout_dir,
+    embed_api_key_secret,
+    get_embed_api_key,
     graph_bin_path,
     index_db_path,
     load_config,
@@ -57,7 +61,6 @@ from scout.prescan.runner import (
 )
 from scout.skill.install import install_skill
 
-app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
 
 
@@ -68,21 +71,28 @@ def _home() -> Path:
 def _require_core() -> None:
     if scout_core is None:
         console.print("[red]scout_core not built. Run: maturin develop[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
 
-@app.command("setup")
-def setup_cmd(
-    space: str = typer.Argument(..., help="Space name"),
-    agent: Optional[str] = typer.Option(None, "--agent", help="cursor|pi|opencode"),
-    force: bool = typer.Option(False, "--force", help="Bypass byte cap / overwrite skill"),
+def _usage() -> None:
+    console.print(
+        "Usage:\n"
+        "  scout <space> setup [--agent cursor|pi|opencode] [--force]\n"
+        "  scout <space> reindex [--force]\n"
+        "  scout <space> search <query> [--top-k N]\n"
+        "  scout serve\n"
+        "\n"
+        "Examples:\n"
+        "  scout myapp setup --agent cursor\n"
+        "  scout myapp search \"auth handler\""
+    )
+
+
+async def _setup_async(
+    space: str,
+    agent: str | None,
+    force: bool,
 ) -> None:
-    """Interactive setup: root → provider → model → prescan → index → skill."""
-    _require_core()
-    asyncio.run(_setup_async(space, agent, force))
-
-
-async def _setup_async(space: str, agent: str | None, force: bool) -> None:
     home = bootstrap_scout_dir()
     config = load_config(home)
 
@@ -90,16 +100,12 @@ async def _setup_async(space: str, agent: str | None, force: bool) -> None:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
         console.print(f"[red]invalid root: {root_path}[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
-    provider_name = typer.prompt(
-        "Embed provider",
-        default="lmstudio",
-        show_default=True,
-    )
+    provider_name = typer.prompt("Embed provider", default="lmstudio")
     if provider_name not in {"openrouter", "lmstudio", "omlx", "unsloth-studio"}:
         console.print("[red]invalid provider[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
     secrets = load_secrets(home)
     endpoint = ""
@@ -113,26 +119,55 @@ async def _setup_async(space: str, agent: str | None, force: bool) -> None:
     else:
         if is_local_provider(provider_name):
             console.print(f"[yellow]{LOCAL_PROVIDER_WARNING}[/yellow]")
+        secret_key = embed_api_key_secret(provider_name)
+        api_key = get_embed_api_key(secrets, provider_name) or typer.prompt(
+            "Embed API key (required if server uses auth; Enter to skip)",
+            default="",
+            hide_input=True,
+        )
+        if api_key:
+            secrets[secret_key] = api_key
+            save_secrets(home, secrets)
         default_port = DEFAULT_PORTS.get(provider_name, 1234)
         start = int(typer.prompt("Port range start", default=str(default_port)))
         end = int(typer.prompt("Port range end", default=str(start + 6)))
-        found = await scan_local_endpoint("127.0.0.1", start, end)
+        found = await scan_local_endpoint("127.0.0.1", start, end, api_key=api_key or None)
         if not found:
             manual = typer.prompt("Manual endpoint URL (or empty to abort)", default="")
             if not manual:
                 console.print("[red]no endpoint found[/red]")
-                raise typer.Exit(1)
+                sys.exit(1)
             found = manual.rstrip("/")
             if not found.endswith("/v1"):
                 found = f"{found}/v1"
         endpoint = found
-        provider = build_provider(provider_name, endpoint=endpoint)
+        provider = build_provider(
+            provider_name,
+            endpoint=endpoint,
+            api_key=api_key or None,
+        )
 
-    models = await provider.list_models()
+    try:
+        models = await provider.list_models()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401 and is_local_provider(provider_name):
+            console.print("[yellow]Server returned 401 — API key required[/yellow]")
+            secret_key = embed_api_key_secret(provider_name)
+            api_key = typer.prompt("Embed API key", hide_input=True)
+            secrets[secret_key] = api_key
+            save_secrets(home, secrets)
+            provider = build_provider(
+                provider_name,
+                endpoint=endpoint,
+                api_key=api_key,
+            )
+            models = await provider.list_models()
+        else:
+            raise
     embed_models = await filter_embed_models(provider, models)
     if not embed_models:
         console.print("[red]no embed-capable models found[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
     console.print("Models:")
     for i, m in enumerate(embed_models[:20]):
         console.print(f"  [{i}] {m}")
@@ -158,13 +193,13 @@ async def _setup_async(space: str, agent: str | None, force: bool) -> None:
     check_capacity(prescan)
     write_prescan_json(prescan_path(home, space), prescan)
     if not typer.confirm("Proceed with indexing?", default=True):
-        raise typer.Exit(0)
+        sys.exit(0)
 
     try:
-        version = await run_reindex(home, space, config, provider)
+        version = await run_reindex(home, space, config, provider, console=console)
     except Exception as exc:
         console.print(f"[red]setup failed: {exc}[/red]")
-        raise typer.Exit(1) from exc
+        sys.exit(1)
     console.print(f"[green]Indexed space '{space}' (version {version})[/green]")
 
     if agent:
@@ -188,103 +223,122 @@ async def _setup_async(space: str, agent: str | None, force: bool) -> None:
             console.print(f"[yellow]{exc}[/yellow]")
 
 
-@app.command("reindex")
-def reindex_cmd(
-    space: str = typer.Argument(...),
-    force: bool = typer.Option(False, "--force"),
-) -> None:
-    """Sync full rebuild for a space."""
-    _require_core()
-    home = _home()
-    config = load_config(home)
-    embed = validate_embed(config)
-    secrets = load_secrets(home)
-    provider = build_provider(
-        embed.provider,
-        api_key=secrets.get("openrouter_api_key"),
-        endpoint=embed.endpoint or None,
-    )
-    entry = validate_space(home, space)
-    prescan = run_prescan(Path(entry.root), entry.skip_globs, entry.skip_paths)
-    check_byte_cap(prescan, force=force)
-    check_capacity(prescan)
-    version = asyncio.run(run_reindex(home, space, config, provider))
-    console.print(f"[green]Reindex complete: {version}[/green]")
+def _parse_flags(argv: list[str]) -> tuple[list[str], bool, str | None, int]:
+    force = False
+    agent: str | None = None
+    top_k = 10
+    cleaned: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--force":
+            force = True
+        elif arg == "--agent" and i + 1 < len(argv):
+            i += 1
+            agent = argv[i]
+        elif arg == "--top-k" and i + 1 < len(argv):
+            i += 1
+            top_k = int(argv[i])
+        else:
+            cleaned.append(arg)
+        i += 1
+    return cleaned, force, agent, top_k
 
 
-@app.command("search")
-def search_cmd(
-    space: str = typer.Argument(...),
-    query: str = typer.Argument(...),
-    top_k: int = typer.Option(10, "--top-k"),
-) -> None:
-    """Vector search via pyo3 (no HTTP)."""
-    _require_core()
-    home = _home()
-    config = load_config(home)
-    embed = validate_embed(config)
-    entry = validate_space(home, space)
-    secrets = load_secrets(home)
+def main(argv: list[str] | None = None) -> None:
+    args = list(argv if argv is not None else sys.argv[1:])
+    if not args or args[0] in {"-h", "--help"}:
+        _usage()
+        sys.exit(0)
 
-    stale, index_version = scout_core.py_check_staleness(
-        entry.root,
-        str(manifest_path(home, space)),
-        embed.provider,
-        embed.model,
-        embed.dimensions,
-        entry.skip_globs,
-        entry.skip_paths,
-    )
-
-    provider = build_provider(
-        embed.provider,
-        api_key=secrets.get("openrouter_api_key"),
-        endpoint=embed.endpoint or None,
-    )
-    query_vec = asyncio.run(provider.embed(embed.model, [query]))[0]
-    raw = scout_core.py_search(
-        str(graph_bin_path(home, space)),
-        str(index_db_path(home, space)),
-        query_vec,
-        top_k,
-        0.0,
-        None,
-        None,
-        stale,
-        index_version,
-    )
-    console.print(JSON(raw))
-    if stale:
-        console.print("[yellow]Index is stale — run reindex[/yellow]")
-
-
-@app.command("serve")
-def serve_cmd() -> None:
-    """Start foreground API server with PID lock."""
-    home = bootstrap_scout_dir()
-    config = load_config(home)
-    pid_file = pid_path(home)
-    if pid_file.exists():
-        existing = pid_file.read_text(encoding="utf-8").strip()
-        console.print(f"[red]scout serve already running (pid {existing})[/red]")
-        raise typer.Exit(1)
-
-    pid_file.write_text(str(os.getpid()), encoding="utf-8")
-    try:
-        console.print(f"[green]Serving on http://127.0.0.1:{config.api_port}[/green]")
-        uvicorn.run(
-            create_app(),
-            host="127.0.0.1",
-            port=config.api_port,
-            log_level="info",
-        )
-    finally:
+    if args[0] == "serve":
+        home = bootstrap_scout_dir()
+        config = load_config(home)
+        pid_file = pid_path(home)
         if pid_file.exists():
-            pid_file.unlink()
+            existing = pid_file.read_text(encoding="utf-8").strip()
+            console.print(f"[red]scout serve already running (pid {existing})[/red]")
+            sys.exit(1)
+        pid_file.write_text(str(os.getpid()), encoding="utf-8")
+        try:
+            console.print(f"[green]Serving on http://127.0.0.1:{config.api_port}[/green]")
+            uvicorn.run(create_app(), host="127.0.0.1", port=config.api_port, log_level="info")
+        finally:
+            if pid_file.exists():
+                pid_file.unlink()
+        return
 
+    positional, force, agent, top_k = _parse_flags(args)
+    if len(positional) < 2:
+        _usage()
+        sys.exit(1)
 
-def main() -> None:
-    app()
+    space = positional[0]
+    cmd = positional[1]
+    _require_core()
+
+    if cmd == "setup":
+        asyncio.run(_setup_async(space, agent, force))
+    elif cmd == "reindex":
+        home = _home()
+        config = load_config(home)
+        embed = validate_embed(config)
+        secrets = load_secrets(home)
+        provider = build_provider(
+            embed.provider,
+            api_key=secrets.get("openrouter_api_key")
+            or get_embed_api_key(secrets, embed.provider),
+            endpoint=embed.endpoint or None,
+        )
+        entry = validate_space(home, space)
+        prescan = run_prescan(Path(entry.root), entry.skip_globs, entry.skip_paths)
+        check_byte_cap(prescan, force=force)
+        check_capacity(prescan)
+        version = asyncio.run(run_reindex(home, space, config, provider, console=console))
+        console.print(f"[green]Reindex complete: {version}[/green]")
+    elif cmd == "search":
+        if len(positional) < 3:
+            console.print("[red]missing query[/red]")
+            sys.exit(1)
+        query = " ".join(positional[2:])
+        home = _home()
+        config = load_config(home)
+        embed = validate_embed(config)
+        entry = validate_space(home, space)
+        secrets = load_secrets(home)
+        stale, index_version = scout_core.py_check_staleness(
+            entry.root,
+            str(manifest_path(home, space)),
+            embed.provider,
+            embed.model,
+            embed.dimensions,
+            entry.skip_globs,
+            entry.skip_paths,
+        )
+        provider = build_provider(
+            embed.provider,
+            api_key=secrets.get("openrouter_api_key")
+            or get_embed_api_key(secrets, embed.provider),
+            endpoint=embed.endpoint or None,
+        )
+        query_vec = asyncio.run(provider.embed(embed.model, [query]))[0]
+        raw = scout_core.py_search(
+            str(graph_bin_path(home, space)),
+            str(index_db_path(home, space)),
+            query_vec,
+            top_k,
+            0.0,
+            None,
+            None,
+            stale,
+            index_version,
+        )
+        console.print(JSON(raw))
+        if stale:
+            console.print("[yellow]Index is stale — run reindex[/yellow]")
+    else:
+        _usage()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 
 import scout_core
+from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from scout.config import (
     ScoutConfig,
@@ -20,16 +22,54 @@ from scout.config import (
 )
 from scout.embed.registry import EmbedProvider
 
+DEFAULT_EMBED_BATCH = 16
+
+
+async def embed_texts_batched(
+    provider: EmbedProvider,
+    model: str,
+    texts: list[str],
+    *,
+    batch_size: int = DEFAULT_EMBED_BATCH,
+    console: Console | None = None,
+) -> list[list[float]]:
+    """Embed texts in batches with progress bar."""
+    if not texts:
+        return []
+
+    out: list[list[float]] = []
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    )
+    with progress:
+        task = progress.add_task("Embedding chunks", total=len(texts))
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            vecs = await provider.embed(model, batch)
+            out.extend(vecs)
+            progress.advance(task, len(batch))
+    return out
+
 
 async def run_reindex(
     home: Path,
     space: str,
     config: ScoutConfig,
     provider: EmbedProvider,
+    *,
+    console: Console | None = None,
 ) -> str:
     """Full synchronous rebuild. Raises on failure; no partial index."""
     if scout_core is None:
         raise RuntimeError("scout_core not built; run maturin develop")
+
+    ui = console or Console()
 
     if not scout_core.py_acquire_reindex_lock(space):
         raise RuntimeError("reindex in progress")
@@ -39,11 +79,13 @@ async def run_reindex(
         embed = validate_embed(config)
         root = Path(entry.root)
 
+        ui.print("[cyan]Scanning workspace...[/cyan]")
         files = scout_core.py_scan_workspace(
             str(root),
             skip_globs=entry.skip_globs,
             skip_paths=entry.skip_paths,
         )
+        ui.print(f"  {len(files)} files")
         files_json = json.dumps(
             [
                 {
@@ -57,14 +99,23 @@ async def run_reindex(
             ]
         )
 
+        ui.print("[cyan]Building graph and chunks...[/cyan]")
         index_version = f"{embed.provider}:{embed.model}:{embed.dimensions}"
+        build_json = scout_core.py_build_index(space, str(root), files_json, index_version)
         build_data = json.loads(build_json)
         snapshot, chunks = build_data[0], build_data[1]
+        ui.print(f"  {len(snapshot.get('nodes', []))} graph nodes, {len(chunks)} chunks")
 
         texts = [c["text"] for c in chunks]
-        embeddings = await provider.embed(embed.model, texts)
+        embeddings = await embed_texts_batched(
+            provider,
+            embed.model,
+            texts,
+            console=ui,
+        )
         embeddings_json = json.dumps(embeddings)
 
+        ui.print("[cyan]Writing vector index...[/cyan]")
         db_tmp = index_db_path(home, space).with_suffix(".db.tmp")
         graph_tmp = graph_bin_path(home, space).with_suffix(".bin.tmp")
 
@@ -77,7 +128,7 @@ async def run_reindex(
         )
         scout_core.py_save_graph(str(graph_tmp), json.dumps(snapshot))
 
-        # Atomic swap
+        ui.print("[cyan]Finalizing index (atomic swap)...[/cyan]")
         db_final = index_db_path(home, space)
         graph_final = graph_bin_path(home, space)
         db_final.parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +147,7 @@ async def run_reindex(
             embed.model,
             embed.dimensions,
         )
+        ui.print(f"[green]Index complete[/green] (version {version})")
         return version
     finally:
         scout_core.py_release_reindex_lock()

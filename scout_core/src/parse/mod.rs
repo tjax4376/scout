@@ -6,7 +6,10 @@ mod typescript;
 
 use std::path::Path;
 
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Language, Parser, Query, QueryCursor, Tree};
+
+use std::collections::HashSet;
 
 use crate::error::{ScoutError, ScoutResult};
 use crate::scan::is_config_or_doc;
@@ -53,14 +56,22 @@ impl SourceLanguage {
 
     fn symbol_query(self) -> &'static str {
         match self {
-            Self::TypeScript | Self::JavaScript => {
+            Self::TypeScript => {
                 r#"
                 (function_declaration name: (identifier) @name) @def
                 (method_definition name: (property_identifier) @name) @def
                 (class_declaration name: (type_identifier) @name) @def
                 (interface_declaration name: (type_identifier) @name) @def
                 (enum_declaration name: (identifier) @name) @def
-                (lexical_declaration (variable_declarator name: (identifier) @name) @name) @def
+                (lexical_declaration (variable_declarator name: (identifier) @name)) @def
+                "#
+            }
+            Self::JavaScript => {
+                r#"
+                (function_declaration name: (identifier) @name) @def
+                (method_definition name: (property_identifier) @name) @def
+                (class_declaration name: (identifier) @name) @def
+                (lexical_declaration (variable_declarator name: (identifier) @name)) @def
                 "#
             }
             Self::Python => {
@@ -135,16 +146,17 @@ pub fn extract_symbols(path: &Path, source: &str) -> ScoutResult<Vec<SymbolInfo>
     };
 
     let mut parser = Parser::new();
-    parser
-        .set_language(&lang.tree_sitter_language())
-        .map_err(|e| ScoutError::Parse(e.to_string()))?;
+    if parser.set_language(&lang.tree_sitter_language()).is_err() {
+        return Ok(vec![]);
+    }
 
     let tree = match parser.parse(source, None) {
         Some(t) => t,
         None => return Ok(vec![]),
     };
 
-    extract_from_tree(lang, source, &tree)
+    // Query/parse errors → empty symbols; graph layer falls back to file chunk.
+    extract_from_tree(lang, source, &tree).or_else(|_| Ok(vec![]))
 }
 
 fn extract_from_tree(lang: SourceLanguage, source: &str, tree: &Tree) -> ScoutResult<Vec<SymbolInfo>> {
@@ -154,10 +166,11 @@ fn extract_from_tree(lang: SourceLanguage, source: &str, tree: &Tree) -> ScoutRe
 
     let mut cursor = QueryCursor::new();
     let mut symbols = Vec::new();
+    let mut seen: HashSet<(String, u32, u32, NodeKind)> = HashSet::new();
     let root = tree.root_node();
 
-    let matches = cursor.matches(&query, root, source.as_bytes());
-    for m in matches {
+    let mut matches = cursor.matches(&query, root, source.as_bytes());
+    while let Some(m) = matches.next() {
         let mut name = String::new();
         let mut def_node = None;
         for capture in m.captures {
@@ -176,6 +189,10 @@ fn extract_from_tree(lang: SourceLanguage, source: &str, tree: &Tree) -> ScoutRe
             let start = node.start_position();
             let end = node.end_position();
             let kind = kind_for_capture(lang, node.kind());
+            let key = (name.clone(), start.row as u32 + 1, end.row as u32 + 1, kind);
+            if !seen.insert(key) {
+                continue;
+            }
             symbols.push(SymbolInfo {
                 kind,
                 name,
@@ -200,5 +217,25 @@ pub fn file_fallback_symbol(source: &str) -> SymbolInfo {
         end_line: line_count,
         start_byte: 0,
         end_byte: source.len(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn javascript_query_compiles() {
+        let src = "class Foo {}\nfunction bar() {}\n";
+        let symbols = extract_symbols(Path::new("test.js"), src).unwrap();
+        assert!(!symbols.is_empty());
+    }
+
+    #[test]
+    fn typescript_query_compiles() {
+        let src = "interface Baz {}\nexport function qux() {}\n";
+        let symbols = extract_symbols(Path::new("test.ts"), src).unwrap();
+        assert!(!symbols.is_empty());
     }
 }

@@ -28,13 +28,13 @@ dev = [
 ]
 
 [project.scripts]
-scout = "scout.cli.main:app"
+scout = "scout.cli.main:main"
 
 [tool.maturin]
 manifest-path = "scout_core/Cargo.toml"
 module-name = "scout_core"
-python-source = "scout"
-features = ["pyo3/extension-module"]
+features = ["extension-module"]
+python-packages = ["scout"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

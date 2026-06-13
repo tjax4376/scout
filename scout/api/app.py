@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from scout.config import (
     ScoutConfig,
     bootstrap_scout_dir,
+    get_embed_api_key,
     graph_bin_path,
     index_db_path,
     load_config,
@@ -76,7 +77,8 @@ async def search_space(space: str, body: SearchRequest, response: Response) -> d
     secrets = load_secrets(home)
     provider = build_provider(
         embed.provider,
-        api_key=secrets.get("openrouter_api_key"),
+        api_key=secrets.get("openrouter_api_key")
+        or get_embed_api_key(secrets, embed.provider),
         endpoint=embed.endpoint or None,
     )
     query_vec = (await provider.embed(embed.model, [body.query]))[0]
@@ -142,7 +144,8 @@ async def reindex_space(space: str) -> dict[str, str]:
     secrets = load_secrets(home)
     provider = build_provider(
         embed.provider,
-        api_key=secrets.get("openrouter_api_key"),
+        api_key=secrets.get("openrouter_api_key")
+        or get_embed_api_key(secrets, embed.provider),
         endpoint=embed.endpoint or None,
     )
     try:

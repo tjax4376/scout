@@ -79,8 +79,16 @@ fn is_binary_file(path: &Path) -> ScoutResult<bool> {
     Ok(non_text * 10 > n)
 }
 
-fn should_skip_dir(name: &str, skip_paths: &HashSet<String>) -> bool {
-    SKIP_DIRS.contains(&name) || skip_paths.contains(name)
+fn path_has_skipped_component(rel: &str, skip_paths: &HashSet<String>) -> bool {
+    if skip_paths.contains(rel) {
+        return true;
+    }
+    for part in rel.split('/') {
+        if SKIP_DIRS.contains(&part) || skip_paths.contains(part) {
+            return true;
+        }
+    }
+    false
 }
 
 fn matches_skip_glob(rel_path: &str, patterns: &[Pattern]) -> bool {
@@ -120,19 +128,15 @@ pub fn scan_workspace(root: &Path, options: &ScanOptions) -> ScoutResult<Vec<Sca
             .to_string_lossy()
             .replace('\\', "/");
 
-        if entry.file_type().is_dir() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if should_skip_dir(name, &skip_paths) {
-                    continue;
-                }
-            }
+        if path_has_skipped_component(&rel, &skip_paths) {
             continue;
         }
 
         if matches_skip_glob(&rel, &glob_patterns) {
             continue;
         }
-        if skip_paths.contains(&rel) {
+
+        if entry.file_type().is_dir() {
             continue;
         }
 

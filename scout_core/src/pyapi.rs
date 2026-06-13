@@ -148,7 +148,7 @@ fn py_check_staleness(
 }
 
 #[pyfunction]
-#[pyo3(signature = (graph_path, db_path, query_embedding, top_k=10, min_score=0.0, kinds=None, path_prefix=None, stale=false, index_version=""))]
+#[pyo3(signature = (graph_path, db_path, query_embedding, top_k=10, min_score=0.0, kinds=None, path_prefix=None, stale=false, index_version=None))]
 fn py_search(
     graph_path: String,
     db_path: String,
@@ -158,7 +158,7 @@ fn py_search(
     kinds: Option<Vec<String>>,
     path_prefix: Option<String>,
     stale: bool,
-    index_version: String,
+    index_version: Option<String>,
 ) -> PyResult<String> {
     let graph = load_graph(PathBuf::from(graph_path).as_path()).map_err(to_py_err)?;
     let conn = open_index(PathBuf::from(db_path).as_path()).map_err(to_py_err)?;
@@ -182,7 +182,8 @@ fn py_search(
         filters.path_prefix.as_deref(),
     )
     .map_err(to_py_err)?;
-    let response = format_search_response(&graph, raw, stale, &index_version);
+    let version = index_version.unwrap_or_default();
+    let response = format_search_response(&graph, raw, stale, &version);
     Ok(serde_json::to_string(&response).map_err(|e| PyValueError::new_err(e.to_string()))?)
 }
 

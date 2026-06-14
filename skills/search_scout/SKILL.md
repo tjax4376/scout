@@ -1,5 +1,5 @@
 ---
-name: search_scout
+name: search-scout
 description: Search local codebase via Scout REST API with graph neighbor context.
 ---
 

@@ -196,9 +196,17 @@ pytest -q
 
 **Resolution:** `scout <space> reindex|setup --embed-batch N` (default 4096). Passes to `embed_texts_batched` → `run_reindex`.
 
-**Usage:** `scout scout reindex --embed-batch 128`
+**Usage:** `scout scout reindex` (auto) or `--embed-batch N` / `--reprobe-embed-batch`
 
-**Ref:** `journal/2026-06-13-embed-batch-cli-flag.md`, `journal/2026-06-12-chunk-utf8-boundary-fix.md`
+**Ref:** `journal/2026-06-13-embed-batch-cli-flag.md`
+
+## 2026-06-13 — Auto embed batch probe (hardware + provider)
+
+**Issue:** Fixed batch 4096 still under-utilizes LM Studio; optimal size varies by GPU VRAM, model, chunk size.
+
+**Resolution:** Default auto-resolve at reindex via **GET /models** metadata (`eval_batch_size`, `context_length`) — no embed trial requests. Formula: `eval_batch_size // chunk_tokens`. Fallback: host RAM estimate. Cache in config; `--reprobe-embed-batch` refreshes.
+
+**Ref:** `journal/2026-06-13-auto-embed-batch-probe.md`, `scout/embed/batch_probe.py`, `journal/2026-06-12-chunk-utf8-boundary-fix.md`
 
 ## 2026-06-12 — Embed 401: wrong API key sent to local provider
 
@@ -254,3 +262,23 @@ pipx uninstall scout && pipx install dist/scout-0.1.0-*.whl
 ```
 
 **Ref:** `journal/2026-06-13-stale-wheel-utf8-panic.md`, `scout_core/src/chunk.rs`
+
+## 2026-06-13 — code-reviewer-scout skill (index-first review)
+
+**Issue:** AI code reviewers load full files into session → high token burn. No review-specific agent skill.
+
+**Resolution:**
+- New skill `skills/code-reviewer-scout/` — index-first escalation ladder (scope → search → node → full read last)
+- Standalone install: `python -m scout.code_reviewer --agent cursor --project --scout-api URL --default-space SPACE`
+- Helper: `skills/code-reviewer-scout/scripts/review_api.py` (path-scoped search, node lookup)
+- Hyphen-only skill name/dir on all agents: `code-reviewer-scout`
+- Does **not** modify setup wizard, `search_scout`, API, or CLI
+
+**Install paths:**
+| Agent | Project |
+|-------|---------|
+| Cursor | `<root>/.cursor/skills/code-reviewer-scout/` |
+| Pi | `<root>/.pi/skills/code-reviewer-scout/` |
+| OpenCode | `<root>/.opencode/skills/code-reviewer-scout/` |
+
+**Ref:** `openspec/changes/ai-code-reviewer-scout/`, `journal/2026-06-13-ai-code-reviewer-scout.md`

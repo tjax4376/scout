@@ -22,6 +22,7 @@ class EmbedConfig:
     model: str = ""
     endpoint: str = ""
     dimensions: int = 0
+    embed_batch_size: int = 0  # 0 = auto-probe at reindex
 
 
 @dataclass
@@ -113,6 +114,7 @@ def load_config(home: Path) -> ScoutConfig:
         model=embed_raw.get("model", ""),
         endpoint=embed_raw.get("endpoint", ""),
         dimensions=int(embed_raw.get("dimensions", 0) or 0),
+        embed_batch_size=int(embed_raw.get("embed_batch_size", 0) or 0),
     )
     spaces: dict[str, SpaceEntry] = {}
     for name, entry in (data.get("spaces", {}) or {}).items():
@@ -143,6 +145,7 @@ def save_config(home: Path, config: ScoutConfig) -> None:
             "model": config.embed.model,
             "endpoint": config.embed.endpoint,
             "dimensions": config.embed.dimensions,
+            "embed_batch_size": config.embed.embed_batch_size,
         },
         "spaces": {},
     }

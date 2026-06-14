@@ -17,12 +17,14 @@ from scout.config import (
     graph_bin_path,
     index_db_path,
     manifest_path,
+    save_config,
     validate_embed,
     validate_space,
 )
+from scout.embed.batch_probe import resolve_embed_batch_size
 from scout.embed.registry import EmbedProvider
 
-DEFAULT_EMBED_BATCH = 4096
+DEFAULT_EMBED_BATCH = 4096  # fallback when auto-probe unavailable
 
 
 async def embed_texts_batched(
@@ -63,7 +65,8 @@ async def run_reindex(
     config: ScoutConfig,
     provider: EmbedProvider,
     *,
-    embed_batch_size: int = DEFAULT_EMBED_BATCH,
+    embed_batch_size: int = 0,
+    reprobe_embed_batch: bool = False,
     console: Console | None = None,
 ) -> str:
     """Full synchronous rebuild. Raises on failure; no partial index."""
@@ -108,11 +111,30 @@ async def run_reindex(
         ui.print(f"  {len(snapshot.get('nodes', []))} graph nodes, {len(chunks)} chunks")
 
         texts = [c["text"] for c in chunks]
+
+        if embed_batch_size > 0:
+            batch = embed_batch_size
+        else:
+            ui.print("[cyan]Resolving embed batch from provider /models...[/cyan]")
+            batch = await resolve_embed_batch_size(
+                provider,
+                embed.model,
+                embed.dimensions,
+                texts,
+                cli_override=0,
+                cached=embed.embed_batch_size,
+                reprobe=reprobe_embed_batch,
+            )
+            if embed.embed_batch_size != batch:
+                config.embed.embed_batch_size = batch
+                save_config(home, config)
+            ui.print(f"  embed batch: {batch}")
+
         embeddings = await embed_texts_batched(
             provider,
             embed.model,
             texts,
-            batch_size=embed_batch_size,
+            batch_size=batch,
             console=ui,
         )
         embeddings_json = json.dumps(embeddings)

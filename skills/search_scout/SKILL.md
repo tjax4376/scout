@@ -3,7 +3,7 @@ name: search-scout
 description: Search local codebase via Scout REST API with graph neighbor context.
 ---
 
-# search_scout
+# search-scout
 
 Query Scout vector index for symbol-level code search with structural neighbors.
 

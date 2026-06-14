@@ -1,3 +1,5 @@
+> **See also:** [rest-api](../rest-api/spec.md), [cli-and-serve](../cli-and-serve/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: Ship search_scout skill in repo

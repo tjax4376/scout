@@ -1,3 +1,5 @@
+> **See also:** [embed-providers](../../../scout-simple-mvp1/specs/embed-providers/spec.md), [setup-wizard](../setup-wizard/spec.md)
+
 ## MODIFIED Requirements
 
 ### Requirement: Interactive setup flow

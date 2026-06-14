@@ -64,9 +64,17 @@ pub fn chunk_file(space: &str, rel_path: &str, source: &str) -> Vec<ChunkData> {
     }]
 }
 
+fn floor_char_boundary(s: &str, mut index: usize) -> usize {
+    index = index.min(s.len());
+    while index > 0 && !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
 fn extract_text(source: &str, start: usize, end: usize) -> String {
-    let end = end.min(source.len());
-    let start = start.min(end);
+    let end = floor_char_boundary(source, end.min(source.len()));
+    let start = floor_char_boundary(source, start.min(end));
     source[start..end].to_string()
 }
 
@@ -83,7 +91,16 @@ fn split_oversized(
     let mut start = 0;
     let mut part = 0;
     while start < text.len() {
-        let end = (start + chunk_chars).min(text.len());
+        let target_end = start.saturating_add(chunk_chars).min(text.len());
+        let mut end = floor_char_boundary(text, target_end);
+        // target_end may land inside a multi-byte char; include at least one full char
+        if end <= start {
+            end = text[start..]
+                .char_indices()
+                .nth(1)
+                .map(|(off, _)| start + off)
+                .unwrap_or(text.len());
+        }
         let slice = &text[start..end];
         let name = format!("{}#part{}", symbol.name, part);
         let node_id = crate::node_id::compute_node_id(
@@ -106,8 +123,53 @@ fn split_oversized(
         if end >= text.len() {
             break;
         }
-        start = end.saturating_sub(overlap_chars);
+        start = floor_char_boundary(text, end.saturating_sub(overlap_chars));
+        if start >= end {
+            start = end;
+        }
         part += 1;
     }
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{NodeKind, SymbolInfo};
+
+    fn greek_symbol(source: &str) -> SymbolInfo {
+        SymbolInfo {
+            name: "_seg_20".into(),
+            kind: NodeKind::Function,
+            start_byte: 0,
+            end_byte: source.len(),
+            start_line: 1,
+            end_line: source.lines().count() as u32,
+        }
+    }
+
+    #[test]
+    fn split_oversized_respects_utf8_boundaries() {
+        // Greek chars are 2–3 bytes each; byte-aligned split at 3072 hits mid-char
+        let line = format!(
+            "def _seg_20():\n    return [(0x1F5F, \"M\", \"{}\"),]\n",
+            "ὗ".repeat(1200)
+        );
+        let source = line.repeat(3);
+        let symbol = greek_symbol(&source);
+        let chunks = split_oversized("space", "sym.py", &source, &symbol);
+        assert!(!chunks.is_empty());
+        for chunk in &chunks {
+            assert!(chunk.text.is_char_boundary(chunk.text.len()));
+        }
+    }
+
+    #[test]
+    fn extract_text_floors_to_char_boundary() {
+        let source = "abcὗdef";
+        let greek_start = "abc".len();
+        let mid_greek = greek_start + 1;
+        let text = extract_text(source, 0, mid_greek);
+        assert_eq!(text, "abc");
+    }
 }

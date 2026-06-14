@@ -1,3 +1,5 @@
+> **See also:** [embed-providers](../embed-providers/spec.md), [agent-skill](../agent-skill/spec.md), [api-url-config](../api-url-config/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: Four-branch setup menu

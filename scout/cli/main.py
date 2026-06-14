@@ -34,7 +34,7 @@ from scout.config import (
     validate_space,
 )
 from scout.embed.registry import build_provider
-from scout.indexing import run_reindex
+from scout.indexing import DEFAULT_EMBED_BATCH, run_reindex
 from scout.prescan.runner import check_byte_cap, check_capacity, run_prescan
 from scout.setup.api_url import build_scout_api_url, parse_api_base_url
 from scout.setup.runner import run_setup
@@ -58,8 +58,8 @@ def _require_core() -> None:
 def _usage() -> None:
     console.print(
         "Usage:\n"
-        "  scout <space> setup [--agent cursor|pi|opencode] [--force]\n"
-        "  scout <space> reindex [--force]\n"
+        "  scout <space> setup [--agent cursor|pi|opencode] [--force] [--embed-batch N]\n"
+        "  scout <space> reindex [--force] [--embed-batch N]\n"
         "  scout <space> search <query> [--top-k N]\n"
         "  scout serve\n"
         "  scout stop-serve\n"
@@ -71,10 +71,13 @@ def _usage() -> None:
     )
 
 
-def _parse_flags(argv: list[str]) -> tuple[list[str], bool, str | None, int]:
+def _parse_flags(
+    argv: list[str],
+) -> tuple[list[str], bool, str | None, int, int]:
     force = False
     agent: str | None = None
     top_k = 10
+    embed_batch = DEFAULT_EMBED_BATCH
     cleaned: list[str] = []
     i = 0
     while i < len(argv):
@@ -87,10 +90,19 @@ def _parse_flags(argv: list[str]) -> tuple[list[str], bool, str | None, int]:
         elif arg == "--top-k" and i + 1 < len(argv):
             i += 1
             top_k = int(argv[i])
+        elif arg == "--embed-batch" and i + 1 < len(argv):
+            i += 1
+            embed_batch = int(argv[i])
         else:
             cleaned.append(arg)
         i += 1
-    return cleaned, force, agent, top_k
+    return cleaned, force, agent, top_k, embed_batch
+
+
+def _validate_embed_batch(embed_batch: int) -> None:
+    if embed_batch < 1:
+        console.print("[red]--embed-batch must be at least 1[/red]")
+        sys.exit(1)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -135,7 +147,7 @@ def main(argv: list[str] | None = None) -> None:
             console.print(f"[yellow]{result.message}[/yellow]")
         return
 
-    positional, force, agent, top_k = _parse_flags(args)
+    positional, force, agent, top_k, embed_batch = _parse_flags(args)
     if len(positional) < 2:
         _usage()
         sys.exit(1)
@@ -145,25 +157,41 @@ def main(argv: list[str] | None = None) -> None:
     _require_core()
 
     if cmd == "setup":
+        _validate_embed_batch(embed_batch)
         asyncio.run(
-            run_setup(space, agent_override=agent, force=force, console=console)
+            run_setup(
+                space,
+                agent_override=agent,
+                force=force,
+                embed_batch_size=embed_batch,
+                console=console,
+            )
         )
     elif cmd == "reindex":
+        _validate_embed_batch(embed_batch)
         home = _home()
         config = load_config(home)
         embed = validate_embed(config)
         secrets = load_secrets(home)
         provider = build_provider(
             embed.provider,
-            api_key=secrets.get("openrouter_api_key")
-            or get_embed_api_key(secrets, embed.provider),
+            api_key=get_embed_api_key(secrets, embed.provider),
             endpoint=embed.endpoint or None,
         )
         entry = validate_space(home, space)
         prescan = run_prescan(Path(entry.root), entry.skip_globs, entry.skip_paths)
         check_byte_cap(prescan, force=force)
         check_capacity(prescan)
-        version = asyncio.run(run_reindex(home, space, config, provider, console=console))
+        version = asyncio.run(
+            run_reindex(
+                home,
+                space,
+                config,
+                provider,
+                embed_batch_size=embed_batch,
+                console=console,
+            )
+        )
         console.print(f"[green]Reindex complete: {version}[/green]")
     elif cmd == "search":
         if len(positional) < 3:
@@ -186,8 +214,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         provider = build_provider(
             embed.provider,
-            api_key=secrets.get("openrouter_api_key")
-            or get_embed_api_key(secrets, embed.provider),
+            api_key=get_embed_api_key(secrets, embed.provider),
             endpoint=embed.endpoint or None,
         )
         query_vec = asyncio.run(provider.embed(embed.model, [query]))[0]

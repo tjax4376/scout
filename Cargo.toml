@@ -1,3 +1,6 @@
+# Scout Rust workspace — single member crate `scout_core`.
+# Built into Python via maturin (see pyproject.toml [tool.maturin]).
+# Dev: PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release
 [workspace]
 members = ["scout_core"]
 resolver = "2"

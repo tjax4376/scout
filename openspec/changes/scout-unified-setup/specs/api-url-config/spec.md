@@ -1,3 +1,5 @@
+> **See also:** [cli-and-serve](../../../scout-simple-mvp1/specs/cli-and-serve/spec.md), [rest-api](../../../scout-simple-mvp1/specs/rest-api/spec.md), [space-config](../../../scout-simple-mvp1/specs/space-config/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: api_base_url persistence

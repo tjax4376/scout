@@ -14,8 +14,8 @@ AGENT_PATHS = {
         "project": lambda root: root / ".cursor" / "skills" / "search_scout",
     },
     "pi": {
-        "global": Path.home() / ".pi" / "skills" / "search_scout",
-        "project": lambda root: root / ".pi" / "skills" / "search_scout",
+        "global": Path.home() / ".pi" / "skills" / "search-scout",
+        "project": lambda root: root / ".pi" / "skills" / "search-scout",
     },
     "opencode": {
         "global": Path.home() / ".config" / "opencode" / "skills" / "search_scout",

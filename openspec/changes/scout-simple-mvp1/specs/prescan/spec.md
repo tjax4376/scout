@@ -1,3 +1,5 @@
+> **See also:** [code-indexing](../code-indexing/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: Prescan filesystem walk

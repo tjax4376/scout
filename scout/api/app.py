@@ -40,6 +40,17 @@ class SearchRequest(BaseModel):
     path_prefix: str | None = None
 
 
+class SpaceInfo(BaseModel):
+    name: str
+    root: str
+    skip_globs: list[str] = Field(default_factory=list)
+    skip_paths: list[str] = Field(default_factory=list)
+
+
+class SpaceListResponse(BaseModel):
+    spaces: list[SpaceInfo]
+
+
 def _home() -> Path:
     return scout_home()
 
@@ -52,6 +63,21 @@ def _require_core() -> None:
 @app.get("/v1/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/spaces/list", response_model=SpaceListResponse)
+def list_spaces() -> SpaceListResponse:
+    config = load_config(_home())
+    spaces = [
+        SpaceInfo(
+            name=entry.name,
+            root=entry.root,
+            skip_globs=entry.skip_globs,
+            skip_paths=entry.skip_paths,
+        )
+        for entry in sorted(config.spaces.values(), key=lambda e: e.name)
+    ]
+    return SpaceListResponse(spaces=spaces)
 
 
 @app.post("/v1/spaces/{space}/search")
@@ -77,8 +103,7 @@ async def search_space(space: str, body: SearchRequest, response: Response) -> d
     secrets = load_secrets(home)
     provider = build_provider(
         embed.provider,
-        api_key=secrets.get("openrouter_api_key")
-        or get_embed_api_key(secrets, embed.provider),
+        api_key=get_embed_api_key(secrets, embed.provider),
         endpoint=embed.endpoint or None,
     )
     query_vec = (await provider.embed(embed.model, [body.query]))[0]
@@ -144,8 +169,7 @@ async def reindex_space(space: str) -> dict[str, str]:
     secrets = load_secrets(home)
     provider = build_provider(
         embed.provider,
-        api_key=secrets.get("openrouter_api_key")
-        or get_embed_api_key(secrets, embed.provider),
+        api_key=get_embed_api_key(secrets, embed.provider),
         endpoint=embed.endpoint or None,
     )
     try:

@@ -1,3 +1,5 @@
+> **See also:** [rest-api](../rest-api/spec.md), [code-indexing](../code-indexing/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: Vector-only search

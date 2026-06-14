@@ -1,3 +1,5 @@
+> **See also:** [rest-api](../rest-api/spec.md), [agent-skill](../agent-skill/spec.md), [scout-stop-serve](../../../scout-stop-serve/specs/cli-and-serve/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: CLI commands

@@ -22,7 +22,7 @@ from scout.config import (
 )
 from scout.embed.registry import EmbedProvider
 
-DEFAULT_EMBED_BATCH = 16
+DEFAULT_EMBED_BATCH = 4096
 
 
 async def embed_texts_batched(
@@ -63,6 +63,7 @@ async def run_reindex(
     config: ScoutConfig,
     provider: EmbedProvider,
     *,
+    embed_batch_size: int = DEFAULT_EMBED_BATCH,
     console: Console | None = None,
 ) -> str:
     """Full synchronous rebuild. Raises on failure; no partial index."""
@@ -111,6 +112,7 @@ async def run_reindex(
             provider,
             embed.model,
             texts,
+            batch_size=embed_batch_size,
             console=ui,
         )
         embeddings_json = json.dumps(embeddings)

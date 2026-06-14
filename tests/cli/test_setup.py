@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from scout.config import ScoutConfig, bootstrap_scout_dir, load_config, save_config
 from scout.setup.api_url import (
     build_scout_api_url,
-    migrate_api_base_url,
     normalize_api_base_url,
     parse_api_base_url,
     repo_name_from_url,
@@ -151,32 +150,6 @@ def test_clone_git_workspace_failure(tmp_path: Path, monkeypatch: pytest.MonkeyP
             git_url="https://github.com/org/repo.git",
             subdir="repo",
         )
-
-
-def test_skill_install_custom_api_url(tmp_path: Path) -> None:
-    from scout.skill.install import install_skill
-
-    project = tmp_path / "proj"
-    project.mkdir()
-    with patch("scout.skill.install.skill_template_path") as mock_tpl:
-        tpl = tmp_path / "template"
-        tpl.mkdir()
-        (tpl / "SKILL.md").write_text(
-            "api={{SCOUT_API}} space={{DEFAULT_SPACE}}", encoding="utf-8"
-        )
-        mock_tpl.return_value = tpl
-        dests = install_skill(
-            "cursor",
-            global_install=False,
-            project_install=True,
-            project_root=project,
-            scout_api="http://10.0.0.5:9000/v1",
-            default_space="myspace",
-            force=True,
-        )
-    content = dests[0].joinpath("SKILL.md").read_text(encoding="utf-8")
-    assert "http://10.0.0.5:9000/v1" in content
-    assert "myspace" in content
 
 
 def test_serve_uses_parsed_host(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,3 +1,5 @@
+> **See also:** [agent-skill](../../../scout-simple-mvp1/specs/agent-skill/spec.md), [rest-api](../../../scout-simple-mvp1/specs/rest-api/spec.md)
+
 ## MODIFIED Requirements
 
 ### Requirement: Agent selection at setup

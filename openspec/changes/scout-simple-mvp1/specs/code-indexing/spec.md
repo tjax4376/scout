@@ -1,3 +1,5 @@
+> **See also:** [vector-search](../vector-search/spec.md), [space-config](../space-config/spec.md), [prescan](../prescan/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: File scan with skip rules

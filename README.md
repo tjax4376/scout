@@ -70,6 +70,16 @@ pytest -q
 scout
 ```
 
+Run before committing OpenSpec edits (also runs in CI):
+
+```bash
+scripts/scout.sh validate
+# or: make validate-openspec
+# or: python scripts/validate_openspec.py
+```
+
+Checks change artifacts under `openspec/changes/`, requirements/scenario sections, relative cross-ref links, **api-contracts.md** ↔ **rest-api/spec.md**, and **scout/api/app.py** route decorators.
+
 ### Interactive setup (4-branch wizard)
 
 ```bash
@@ -116,7 +126,8 @@ scout stop-serve   # from another terminal
 scout_core/          # Rust engine (pyo3)
 scout/               # Python CLI, API, embed, prescan, skill, setup
 skills/search_scout/ # Agent skill template
-openspec/            # Change specs and tasks
+openspec/            # Change specs and tasks (validate: scripts/scout.sh validate)
+scripts/             # scout.sh build/start/validate, verify_pipx_install.sh
 ```
 
 ## Remaining tasks (MVP1)

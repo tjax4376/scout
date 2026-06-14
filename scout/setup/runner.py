@@ -19,7 +19,7 @@ from scout.config import (
     register_space,
     save_config,
 )
-from scout.indexing import run_reindex
+from scout.indexing import DEFAULT_EMBED_BATCH, run_reindex
 from scout.prescan.runner import (
     check_byte_cap,
     check_capacity,
@@ -50,6 +50,7 @@ async def run_setup(
     *,
     agent_override: str | None = None,
     force: bool = False,
+    embed_batch_size: int | None = None,
     console: Console | None = None,
 ) -> None:
     """Execute unified 4-branch setup wizard."""
@@ -100,7 +101,12 @@ async def run_setup(
 
     try:
         version = await run_reindex(
-            home, space, config, embed_result.provider, console=rich_console
+            home,
+            space,
+            config,
+            embed_result.provider,
+            embed_batch_size=embed_batch_size or DEFAULT_EMBED_BATCH,
+            console=rich_console,
         )
     except Exception as exc:
         rich_console.print(f"[red]setup failed: {exc}[/red]")

@@ -1,3 +1,5 @@
+> **See also:** [cli-and-serve](../../../scout-simple-mvp1/specs/cli-and-serve/spec.md)
+
 ## MODIFIED Requirements
 
 ### Requirement: CLI commands

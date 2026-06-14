@@ -26,6 +26,9 @@ jobs:
       - name: Build extension
         run: maturin develop --release
 
+      - name: Validate OpenSpec
+        run: python scripts/validate_openspec.py
+
       - name: Run tests
         run: pytest -q
 

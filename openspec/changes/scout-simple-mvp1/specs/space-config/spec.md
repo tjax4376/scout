@@ -1,3 +1,5 @@
+> **See also:** [rest-api](../rest-api/spec.md), [code-indexing](../code-indexing/spec.md), [api-url-config](../../../scout-unified-setup/specs/api-url-config/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: Named workspace spaces

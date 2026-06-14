@@ -1,3 +1,5 @@
+> **See also:** [vector-search](../vector-search/spec.md), [cli-and-serve](../cli-and-serve/spec.md), [space-config](../space-config/spec.md), [agent-skill](../agent-skill/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: Localhost REST API at /v1
@@ -50,6 +52,17 @@ The system SHALL expose `POST /v1/spaces/{space}/reindex` triggering a synchrono
 #### Scenario: Concurrent reindex returns 409
 - **WHEN** a reindex is in progress and client POSTs to reindex
 - **THEN** the system returns HTTP 409 Conflict
+
+### Requirement: List spaces endpoint
+The system SHALL expose `GET /v1/spaces/list` returning all spaces from `config.yaml` with `name`, `root`, `skip_globs`, and `skip_paths`. The endpoint SHALL NOT require scout_core.
+
+#### Scenario: List configured spaces
+- **WHEN** client sends `GET /v1/spaces/list`
+- **THEN** the system returns a JSON object with a `spaces` array sorted by name
+
+#### Scenario: Empty config returns empty list
+- **WHEN** no spaces are configured and client sends `GET /v1/spaces/list`
+- **THEN** the system returns `{"spaces": []}`
 
 ### Requirement: Response headers for staleness and version
 The system SHALL include `X-Scout-Stale` (true/false) and `X-Scout-Index-Version` headers on search and node responses.

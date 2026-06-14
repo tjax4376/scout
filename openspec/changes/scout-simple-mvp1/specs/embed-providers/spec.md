@@ -1,3 +1,5 @@
+> **See also:** [setup-wizard](../../../scout-unified-setup/specs/setup-wizard/spec.md), [space-config](../space-config/spec.md)
+
 ## ADDED Requirements
 
 ### Requirement: Embed provider registry

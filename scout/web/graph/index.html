@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scout Graph</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="vendor/cytoscape.min.js"></script>
+</head>
+<body>
+  <header class="top-bar">
+    <h1>Scout Graph</h1>
+    <div class="controls">
+      <label>
+        Space
+        <select id="space-select" aria-label="Space"></select>
+      </label>
+      <label>
+        Symbol search
+        <input id="symbol-query" type="search" placeholder="function name…" />
+        <button id="symbol-search-btn" type="button">Search</button>
+      </label>
+      <label>
+        File path
+        <input id="file-path" type="text" placeholder="src/auth.py" />
+        <button id="file-load-btn" type="button">Load</button>
+      </label>
+    </div>
+    <div id="status-bar" class="status-bar">Ready</div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section>
+        <h2>Search hits</h2>
+        <ul id="hit-list" class="hit-list"></ul>
+      </section>
+      <section>
+        <h2>Node</h2>
+        <div id="node-detail" class="node-detail">Select a node</div>
+        <button id="preview-btn" type="button" disabled>Preview source</button>
+        <pre id="source-preview" class="source-preview"></pre>
+      </section>
+    </aside>
+    <div id="cy" class="graph-canvas" role="img" aria-label="Code graph"></div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

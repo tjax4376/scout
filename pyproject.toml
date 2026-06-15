@@ -55,6 +55,9 @@ python-packages = ["scout"]
 # Stable ABI wheel (cp311-abi3): one wheel per platform for Python 3.11+
 py-limited-api = true
 
+[tool.setuptools.package-data]
+scout = ["web/graph/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

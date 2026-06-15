@@ -12,8 +12,10 @@ from typing import Any
 
 import scout_core
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from scout.api.graph_file import aggregate_file_graph
 from scout.config import (
     ScoutConfig,
     bootstrap_scout_dir,
@@ -29,6 +31,7 @@ from scout.config import (
     validate_space,
 )
 from scout.embed.registry import build_provider
+from scout.graph_find import graph_path_search
 from scout.indexing import run_reindex
 from scout.session.runtime import SessionRuntime
 
@@ -49,6 +52,8 @@ app = FastAPI(
 )
 app.state.embed_mode = False
 app.state.session_runtime = None
+
+_GRAPH_WEB_DIR = Path(__file__).resolve().parent.parent / "web" / "graph"
 
 
 class SearchRequest(BaseModel):
@@ -303,6 +308,80 @@ def get_neighbors(
     return json.loads(raw)
 
 
+@app.get("/v1/spaces/{space}/graph/search")
+def graph_search(
+    space: str,
+    response: Response,
+    q: str = Query(..., min_length=1),
+    top_k: int = Query(default=10, ge=1, le=50),
+) -> dict[str, Any]:
+    _require_core()
+    home = _home()
+    config = load_config(home)
+    if space not in config.spaces:
+        raise HTTPException(status_code=404, detail=f"unknown space: {space}")
+
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="empty search query")
+
+    try:
+        payload = graph_path_search(
+            home,
+            space,
+            config,
+            query,
+            top_k=top_k,
+            dedupe_by_path=False,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    stale = bool(payload.get("stale"))
+    index_version = str(payload.get("index_version") or "")
+    _set_staleness_headers(response, stale, index_version)
+    return payload
+
+
+@app.get("/v1/spaces/{space}/graph/file")
+def graph_file(
+    space: str,
+    response: Response,
+    rel_path: str = Query(..., min_length=1),
+    max_nodes: int = Query(default=200, ge=1, le=200),
+) -> dict[str, Any]:
+    _require_core()
+    home = _home()
+    config = load_config(home)
+    if space not in config.spaces:
+        raise HTTPException(status_code=404, detail=f"unknown space: {space}")
+
+    entry = validate_space(home, space)
+    stale, index_version = _staleness(space, home, config)
+
+    try:
+        scout_core.py_read_workspace_file(entry.root, rel_path, 1, 1)
+    except Exception as exc:
+        raise _map_scout_core_error(exc) from exc
+
+    graph_path = graph_bin_path(home, space)
+    if not graph_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="graph index not found; run scout <space> reindex",
+        )
+
+    payload = aggregate_file_graph(
+        str(graph_path),
+        rel_path,
+        max_nodes=max_nodes,
+    )
+    _set_staleness_headers(response, stale, index_version)
+    return payload
+
+
 @app.get("/v1/spaces/{space}/symbols")
 def list_symbols(
     space: str,
@@ -454,3 +533,11 @@ def create_app(embed_mode: bool = False, warm_cache: bool = True) -> FastAPI:
             raise
         app.state.session_runtime = runtime
     return app
+
+
+if _GRAPH_WEB_DIR.is_dir():
+    app.mount(
+        "/graph",
+        StaticFiles(directory=str(_GRAPH_WEB_DIR), html=True),
+        name="graph-ui",
+    )

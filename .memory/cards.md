@@ -1,5 +1,19 @@
 # Scout Memory Cards
 
+## 2026-06-15 — Graph visualization webpage
+
+**Issue:** Graph only reachable via REST/curl/agents — no human browser UI to search symbols or explore file ↔ function connections.
+
+**Resolution:**
+- Static SPA at `GET /graph` (Cytoscape.js, bundled MIT)
+- `GET /v1/spaces/{space}/graph/search` — symbol/path lookup (reuses `graph_find`, `dedupe_by_path=False`)
+- `GET /v1/spaces/{space}/graph/file` — symbols in file + depth-1 neighbors + edges
+- `scout serve` logs `Graph UI: http://127.0.0.1:<port>/graph`
+- Deep links: `?space=&file=&q=`
+- Works graph-only (no embed)
+
+**Ref:** `openspec/changes/graph-visualization-webpage/`, `journal/2026-06-15-graph-visualization-webpage.md`
+
 ## 2026-06-12 — Grill closed: Scout v2 MVP1 scope
 
 **Issue:** Original plan ambiguous — Neo4j vs in-memory, module boundary, embed provider, agent integration. Pass 2 gaps: search contract, neighbor traversal, embed providers, pyo3 boundary, prescan capacity.
@@ -484,6 +498,17 @@ python -m scout.code_reviewer --agent cursor --project --scout-api URL --default
 - Embed setup errors surfaced instead of generic CLI failure
 
 **Ref:** `journal/2026-06-14-setup-api-discovery-embed-fix.md`
+
+## 2026-06-15 — CI maturin develop missing venv
+
+**Issue:** CI `test` job failed: `maturin develop` requires active venv or `.venv` in cwd/parent; workflow used bare `pip install` + `maturin develop` with no virtualenv.
+
+**Resolution:**
+- `.github/workflows/ci.yml` — create `.venv`, add bin to `GITHUB_PATH`, set `VIRTUAL_ENV` before install/build
+- Set `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` on build step (matches `scripts/scout.sh`)
+- Added `pydantic` to CI deps (matches dev install list)
+
+**Ref:** `journal/2026-06-15-ci-maturin-venv.md`
 
 ## 2026-06-14 — CLI search graph path fallback
 

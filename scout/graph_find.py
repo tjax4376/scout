@@ -12,6 +12,8 @@ import scout_core
 
 from scout.config import ScoutConfig, graph_bin_path, manifest_path, validate_space
 
+MAX_GRAPH_SEARCH_TOP_K = 50
+
 
 def graph_path_search(
     home: Path,
@@ -20,6 +22,7 @@ def graph_path_search(
     query: str,
     *,
     top_k: int = 10,
+    dedupe_by_path: bool = True,
 ) -> dict[str, object]:
     """Match indexed graph nodes by rel_path or symbol name (case-insensitive)."""
     if scout_core is None:
@@ -35,6 +38,8 @@ def graph_path_search(
     needle = query.strip().lower()
     if not needle:
         raise ValueError("empty search query")
+
+    top_k = max(1, min(int(top_k), MAX_GRAPH_SEARCH_TOP_K))
 
     scored: list[dict[str, object]] = []
     for sym in payload.get("symbols", []):
@@ -60,19 +65,30 @@ def graph_path_search(
             }
         )
 
-    by_path: dict[str, dict[str, object]] = {}
-    for hit in scored:
-        rel = str(hit.get("rel_path") or "")
-        if not rel:
-            continue
-        existing = by_path.get(rel)
-        if existing is None or float(hit["score"]) > float(existing["score"]):
-            by_path[rel] = hit
+    ranked = sorted(
+        scored,
+        key=lambda h: (
+            -float(h["score"]),
+            str(h.get("rel_path") or ""),
+            str(h.get("symbol") or ""),
+        ),
+    )
 
-    hits = sorted(
-        by_path.values(),
-        key=lambda h: (-float(h["score"]), str(h.get("rel_path") or "")),
-    )[: max(1, top_k)]
+    if dedupe_by_path:
+        by_path: dict[str, dict[str, object]] = {}
+        for hit in ranked:
+            rel = str(hit.get("rel_path") or "")
+            if not rel:
+                continue
+            existing = by_path.get(rel)
+            if existing is None or float(hit["score"]) > float(existing["score"]):
+                by_path[rel] = hit
+        hits = sorted(
+            by_path.values(),
+            key=lambda h: (-float(h["score"]), str(h.get("rel_path") or "")),
+        )[:top_k]
+    else:
+        hits = ranked[:top_k]
 
     stale, index_version = scout_core.py_check_staleness(
         entry.root,

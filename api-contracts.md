@@ -18,6 +18,7 @@ REST API exposed by `scout serve`. All routes live under `/v1`. Base URL configu
 | Content-Type (POST bodies) | `application/json` |
 | OpenAPI spec | `GET /v1/openapi.json` |
 | Interactive docs | `GET /docs` (FastAPI Swagger UI) |
+| Graph UI | `GET /graph` (browser code-graph explorer) |
 | Multi-space | One `scout serve` serves all spaces in `config.yaml` |
 
 Path convention: `{BASE}` = configured base URL including `/v1`, e.g. `http://127.0.0.1:8741/v1`.
@@ -35,6 +36,8 @@ Path convention: `{BASE}` = configured base URL including `/v1`, e.g. `http://12
 | `GET` | `/v1/spaces/{space}/node/{node_id}/neighbors` | Graph neighbor expansion (no embed) |
 | `GET` | `/v1/spaces/{space}/symbols` | List graph nodes under `path_prefix` (no embed) |
 | `GET` | `/v1/spaces/{space}/file` | Read workspace source file or line range |
+| `GET` | `/v1/spaces/{space}/graph/search` | Graph symbol/path search (no embed) |
+| `GET` | `/v1/spaces/{space}/graph/file` | Symbols in file + depth-1 neighbors |
 | `GET` | `/v1/spaces/{space}/session/status` | Session embed queue/index stats (`scout serve --embed` only) |
 | `DELETE` | `/v1/spaces/{space}/session/index` | Clear session vector index (`scout serve --embed` only) |
 | `POST` | `/v1/spaces/{space}/reindex` | Synchronous full index rebuild |
@@ -619,6 +622,92 @@ if resp.status_code == 409:
 else:
     resp.raise_for_status()
     print(resp.json())  # {"index_version": "...", "status": "ok"}
+```
+
+---
+
+## 10. Graph search (no embed)
+
+### `GET /v1/spaces/{space}/graph/search`
+
+Match indexed graph nodes by symbol name or `rel_path` substring. No vector embed required.
+
+| Query param | Required | Default | Description |
+|-------------|----------|---------|-------------|
+| `q` | yes | — | Search string (symbol or path fragment) |
+| `top_k` | no | `10` | Max hits (1–50) |
+
+#### Response `200 OK`
+
+```json
+{
+  "hits": [
+    {
+      "node_id": "abc123",
+      "kind": "function",
+      "symbol": "authenticate",
+      "rel_path": "src/auth.py",
+      "location_ref": "src=/src/auth.py",
+      "start_line": 1,
+      "end_line": 2,
+      "score": 0.5
+    }
+  ],
+  "graph_only": true,
+  "stale": false,
+  "index_version": "graph-only:v1"
+}
+```
+
+#### Examples
+
+```bash
+curl -s "{BASE}/spaces/myapp/graph/search?q=authenticate"
+```
+
+Returns `400` for empty query, `404` for unknown space.
+
+---
+
+## 11. Graph file aggregate (no embed)
+
+### `GET /v1/spaces/{space}/graph/file`
+
+Return all symbol nodes in a file plus depth-1 neighbors and connecting edges. Uses same `rel_path` validation as `GET /file`.
+
+| Query param | Required | Default | Description |
+|-------------|----------|---------|-------------|
+| `rel_path` | yes | — | File path relative to space root |
+| `max_nodes` | no | `200` | Cap total nodes returned (1–200) |
+
+#### Response `200 OK`
+
+```json
+{
+  "rel_path": "src/auth.py",
+  "symbols": [
+    {
+      "node_id": "n1",
+      "kind": "function",
+      "symbol": "authenticate",
+      "rel_path": "src/auth.py",
+      "location_ref": "src=/src/auth.py",
+      "start_line": 1,
+      "end_line": 2
+    }
+  ],
+  "neighbors": [],
+  "edges": [
+    {"source": "n1", "target": "n2", "edge": "calls"}
+  ],
+  "truncated": false
+}
+```
+
+#### Examples
+
+```bash
+curl -s "{BASE}/spaces/myapp/graph/file?rel_path=src/auth.py"
 ```
 
 ---

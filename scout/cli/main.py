@@ -151,6 +151,8 @@ def _main_impl(argv: list[str] | None = None) -> None:
         try:
             mode_label = " (embed)" if embed_mode else ""
             console.print(f"[green]Serving{mode_label} on {api_url}[/green]")
+            graph_url = api_url.removesuffix("/v1") + "/graph"
+            console.print(f"[green]Graph UI: {graph_url}[/green]")
             uvicorn.run(
                 create_app(embed_mode=embed_mode, warm_cache=warm_cache),
                 host=endpoint.host,

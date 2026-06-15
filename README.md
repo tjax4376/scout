@@ -381,6 +381,7 @@ scout stop-serve
 | Search (no serve needed) | `scout myapp search "error handling"` |
 | Limit search results | `scout myapp search "handler" --top-k 5` |
 | Start REST API | `scout serve` |
+| Open graph UI | `http://127.0.0.1:<port>/graph` (after `scout serve`) |
 | Start with session embed | `scout serve --embed` |
 | Session embed, lazy RAM cache | `scout serve --embed --no-warm-cache` |
 | Stop REST API | `scout stop-serve` |
@@ -446,6 +447,18 @@ By default (`--embed-batch 0`), Scout probes the embed provider's `/models` meta
 
 Start with `scout serve` (or `scout serve --embed` for session semantic search). Base URL is configured at setup (default `http://127.0.0.1:8741/v1`). One server instance serves **all** spaces in config.
 
+### Graph UI
+
+With `scout serve` running, open **`http://127.0.0.1:<port>/graph`** in a browser (port from the `Serving on …` / `Graph UI:` lines). The UI lets you:
+
+- Pick a configured space
+- Search symbols/functions by name
+- Load a file path to see its symbols and connected functions
+- Click nodes to expand neighbors; preview source via the side panel
+- Share state with query params: `?space=myapp&file=src/auth.py&q=authenticate`
+
+No embed server required — graph-only spaces work.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/health` | Liveness check |
@@ -455,6 +468,9 @@ Start with `scout serve` (or `scout serve --embed` for session semantic search).
 | `GET` | `/v1/spaces/{space}/node/{node_id}/neighbors` | Graph neighbor expansion |
 | `GET` | `/v1/spaces/{space}/symbols` | List symbols under `path_prefix` |
 | `GET` | `/v1/spaces/{space}/file` | Read workspace file or line range |
+| `GET` | `/v1/spaces/{space}/graph/search` | Symbol/path graph search (no embed) |
+| `GET` | `/v1/spaces/{space}/graph/file` | File symbols + connected neighbors |
+| `GET` | `/graph` | Browser graph visualization UI |
 | `GET` | `/v1/spaces/{space}/session/status` | Session embed stats (`--embed` only) |
 | `DELETE` | `/v1/spaces/{space}/session/index` | Clear session index (`--embed` only) |
 | `POST` | `/v1/spaces/{space}/reindex` | Synchronous graph rebuild |

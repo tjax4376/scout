@@ -20,11 +20,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Create virtualenv
+        run: |
+          python -m venv .venv
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> "$GITHUB_ENV"
+
       - name: Install maturin
-        run: pip install maturin pytest pytest-asyncio httpx pyyaml rich typer fastapi uvicorn
+        run: pip install maturin pytest pytest-asyncio httpx pyyaml rich typer fastapi uvicorn pydantic
 
       - name: Build extension
         run: maturin develop --release
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
       - name: Validate OpenSpec
         run: python scripts/validate_openspec.py

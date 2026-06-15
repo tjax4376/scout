@@ -387,7 +387,7 @@ def list_symbols(
     space: str,
     request: Request,
     response: Response,
-    path_prefix: str = Query(..., min_length=1),
+    path_prefix: str = Query(default="", min_length=0),
     kinds: list[str] | None = Query(default=None),
 ) -> dict[str, Any]:
     _require_core()

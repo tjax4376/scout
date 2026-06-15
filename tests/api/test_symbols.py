@@ -34,7 +34,10 @@ def test_symbols_kind_filter(indexed_api_client: TestClient, indexed_space) -> N
 
 
 @requires_scout_core
-def test_symbols_missing_prefix_422(indexed_api_client: TestClient, indexed_space) -> None:
+def test_symbols_empty_prefix_returns_all(indexed_api_client: TestClient, indexed_space) -> None:
     space, _ = indexed_space
     resp = indexed_api_client.get(f"/v1/spaces/{space}/symbols")
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "symbols" in data
+    assert len(data["symbols"]) >= 1

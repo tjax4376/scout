@@ -30,7 +30,12 @@
   </header>
 
   <main class="layout">
-    <aside class="sidebar">
+    <aside id="tree-pane" class="tree-pane">
+      <section class="tree-section">
+        <h2>Functions</h2>
+        <div id="function-tree-status" class="tree-status" aria-live="polite"></div>
+        <ul id="function-tree" class="function-tree" role="tree" aria-label="Function tree"></ul>
+      </section>
       <section>
         <h2>Search hits</h2>
         <ul id="hit-list" class="hit-list"></ul>
@@ -42,6 +47,14 @@
         <pre id="source-preview" class="source-preview"></pre>
       </section>
     </aside>
+    <div
+      id="resize-handle"
+      class="resize-handle"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      tabindex="0"
+    ></div>
     <div id="cy" class="graph-canvas" role="img" aria-label="Code graph"></div>
   </main>
 

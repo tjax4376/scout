@@ -23,7 +23,6 @@ bincode = "1.3"              # graph.bin serialization (petgraph snapshot)
 glob = "0.3"                 # skip_globs matching during workspace scan
 ignore = "0.4"               # .gitignore-aware workspace walk
 rayon = "1.10"               # parallel bulk file reads for RAM cache warm
-walkdir = "2.5"              # WalkDir results for ignore filter_entry
 petgraph = "0.7"             # in-memory code graph (contains, imports, calls)
 pyo3 = { version = "0.24", features = [] }  # Python bindings (pyapi.rs)
 rusqlite = { version = "0.32", features = ["bundled"] }  # index.db metadata

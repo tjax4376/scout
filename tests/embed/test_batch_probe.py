@@ -10,7 +10,6 @@ from scout.embed.batch_probe import (
     ProviderModelLimits,
     batch_from_limits,
     compute_embed_batch_size,
-    hardware_batch_ceiling,
     median_probe_chars,
     parse_model_limits,
     resolve_embed_batch_size,

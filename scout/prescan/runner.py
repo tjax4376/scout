@@ -16,6 +16,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+import psutil
 import scout_core
 
 BYTE_CAP_DEFAULT = 100 * 1024 * 1024 * 1024  # 100GB
@@ -71,13 +72,7 @@ def run_prescan(
 
 
 def _available_ram_bytes() -> int:
-    try:
-        import psutil  # type: ignore
-
-        return int(psutil.virtual_memory().available)
-    except Exception:
-        # Fallback when psutil not installed.
-        return 8 * 1024 * 1024 * 1024
+    return int(psutil.virtual_memory().available)
 
 
 def display_prescan_table(console: Console, result: PrescanResult) -> None:

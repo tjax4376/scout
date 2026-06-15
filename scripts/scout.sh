@@ -53,7 +53,7 @@ activate_prod_venv() {
 
 install_python_deps() {
   pip install -q -U pip
-  pip install -q maturin pytest pytest-asyncio httpx pyyaml rich typer fastapi uvicorn pydantic
+  pip install -q maturin pytest pytest-asyncio httpx psutil pyyaml rich typer fastapi uvicorn pydantic
 }
 
 remove_stale_pid_files() {

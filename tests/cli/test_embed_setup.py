@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from scout.config import ScoutConfig
-from scout.setup.embed import EmbedSetupResult, configure_embed
+from scout.setup.embed import configure_embed
 
 
 @pytest.mark.asyncio

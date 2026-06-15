@@ -27,7 +27,7 @@ jobs:
           echo "VIRTUAL_ENV=$GITHUB_WORKSPACE/.venv" >> "$GITHUB_ENV"
 
       - name: Install maturin
-        run: pip install maturin pytest pytest-asyncio httpx pyyaml rich typer fastapi uvicorn pydantic
+        run: pip install maturin pytest pytest-asyncio httpx psutil pyyaml rich typer fastapi uvicorn pydantic
 
       - name: Build extension
         run: maturin develop --release

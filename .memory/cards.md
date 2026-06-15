@@ -358,6 +358,23 @@ Verify: `lsof -iTCP:8746 -sTCP:LISTEN` or `curl http://127.0.0.1:8746/v1/spaces/
 
 **Ref:** `openspec/changes/setup-graph-only-no-chunks/`, `journal/2026-06-14-setup-graph-only-no-chunks.md`
 
+## 2026-06-15 — Unused dependency cleanup
+
+**Issue:** Stale imports, undeclared `psutil`, unused direct `walkdir` Rust dep in Cargo.toml.
+
+**Resolution:**
+- `ruff check --select F401 --fix` — 11 unused imports removed (3 prod, 8 tests)
+- Removed `walkdir` from `scout_core/Cargo.toml` (still transitive via `ignore`)
+- Added `psutil>=6.1.0` to `pyproject.toml`; `prescan/runner.py` top-level import
+
+**Ref:** `journal/2026-06-15-unused-deps-audit.md`
+
+## 2026-06-15 — Remove openspec pytest suite
+
+**Issue:** `tests/openspec/test_validate_openspec.py` no longer required; failed when `openspec/` gitignored.
+
+**Resolution:** Deleted `tests/openspec/` from pytest suite. `scripts/validate_openspec.py` + `scout.sh validate` remain for manual/CI opt-in.
+
 
 **Issue:** `scout scour search "auth"` → full Python traceback (`ValueError: unknown space: scour`).
 

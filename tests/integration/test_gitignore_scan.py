@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 import scout_core
 from tests.conftest import requires_scout_core

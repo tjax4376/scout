@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import scout_core
-import typer
 import uvicorn
 from rich.console import Console
 from rich.json import JSON
@@ -30,7 +29,6 @@ from scout.config import (
     load_secrets,
     manifest_path,
     pid_path,
-    prescan_path,
     scout_home,
     validate_embed,
     validate_space,

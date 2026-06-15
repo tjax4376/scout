@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from scout.cli.errors import FAREWELL
-from scout.config import ScoutConfig, SpaceEntry, load_config, save_config
+from scout.config import SpaceEntry, load_config, save_config
 
 
 def _patch_cli_home(monkeypatch: pytest.MonkeyPatch, home) -> None:
@@ -65,7 +65,7 @@ def test_unknown_space_lists_configured_spaces(
     assert "Configured spaces: alpha, beta" in err
 
 
-def test_missing_vector_index(
+def test_missing_graph_index(
     patch_scout_config_home,
     sample_project,
     capsys,
@@ -85,7 +85,7 @@ def test_missing_vector_index(
 
     assert exc.value.code == 1
     err = capsys.readouterr().err
-    assert "vector index not available" in err
+    assert "graph index not found" in err
     assert FAREWELL in err
     assert "Traceback" not in err
 

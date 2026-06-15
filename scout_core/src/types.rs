@@ -97,6 +97,9 @@ pub struct GraphNodeData {
     pub rel_path: String,
     pub start_line: u32,
     pub end_line: u32,
+    /// Agent file pointer: `{folder_name}={/rel_path}`.
+    #[serde(default)]
+    pub location_ref: String,
 }
 
 /// Text chunk linked to graph node.
@@ -143,11 +146,13 @@ pub struct NeighborHit {
     pub kind: String,
     pub symbol: Option<String>,
     pub rel_path: String,
+    #[serde(default)]
+    pub location_ref: String,
     pub edge: String,
     pub depth: u8,
 }
 
-/// Single search hit.
+/// Single search hit (vector search — snippet only).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
     pub node_id: String,
@@ -158,8 +163,65 @@ pub struct SearchHit {
     pub end_line: u32,
     pub score: f32,
     pub snippet: String,
+    /// Full stored chunk text (compressed when compression enabled at embed time).
+    pub compressed_text: String,
     pub breadcrumb: String,
     pub neighbors: Vec<NeighborHit>,
+}
+
+/// Node lookup response with full indexed chunk text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeLookupHit {
+    pub node_id: String,
+    pub kind: String,
+    pub symbol: Option<String>,
+    pub rel_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    #[serde(default)]
+    pub location_ref: String,
+    pub score: f32,
+    pub text: String,
+    /// Indexed chunk body (same as `text` when stored compressed).
+    pub compressed_text: String,
+    pub breadcrumb: String,
+    pub neighbors: Vec<NeighborHit>,
+}
+
+/// Graph symbol entry (no chunk text).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SymbolEntry {
+    pub node_id: String,
+    pub kind: String,
+    pub symbol: Option<String>,
+    pub rel_path: String,
+    #[serde(default)]
+    pub location_ref: String,
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
+/// Symbol list response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SymbolListResponse {
+    pub symbols: Vec<SymbolEntry>,
+}
+
+/// Neighbor expansion response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeighborsResponse {
+    pub node_id: String,
+    pub neighbors: Vec<NeighborHit>,
+}
+
+/// Workspace file read response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileReadResponse {
+    pub rel_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub text: String,
+    pub total_lines: u32,
 }
 
 /// Full search response.

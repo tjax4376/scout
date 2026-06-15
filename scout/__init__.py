@@ -3,7 +3,7 @@
 Metadata: v0.1.0 | Scout Contributors | 2026-06-12
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 try:
     import scout_core  # noqa: F401

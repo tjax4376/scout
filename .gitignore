@@ -24,10 +24,17 @@ dist/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
+.cursor/
+.memory/
+
 
 # Scout runtime data
 .scout/
 secrets.yaml
+journal/
+open_spec/
+openspec/
+makefile 
 
 # Build artifacts
 *.whl

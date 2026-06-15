@@ -16,31 +16,25 @@ from scout.setup.api_url import DEFAULT_API_BASE_URL, normalize_api_base_url
 
 
 class SetupBranch(Enum):
-    LOCAL_LOCAL = 1
-    LOCAL_REMOTE = 2
-    GIT_LOCAL = 3
-    GIT_REMOTE = 4
+    LOCAL = 1
+    GIT = 2
 
     @property
     def uses_git(self) -> bool:
-        return self in {SetupBranch.GIT_LOCAL, SetupBranch.GIT_REMOTE}
-
-    @property
-    def uses_openrouter(self) -> bool:
-        return self in {SetupBranch.LOCAL_REMOTE, SetupBranch.GIT_REMOTE}
+        return self is SetupBranch.GIT
 
 
 BRANCH_LABELS = {
-    SetupBranch.LOCAL_LOCAL: "1) Local files + Local LLM (lmstudio/omlx/unsloth-studio)",
-    SetupBranch.LOCAL_REMOTE: "2) Local files + Remote LLM (OpenRouter)",
-    SetupBranch.GIT_LOCAL: "3) Git repo (clone to cwd) + Local LLM",
-    SetupBranch.GIT_REMOTE: "4) Git repo (clone to cwd) + Remote LLM (OpenRouter)",
+    SetupBranch.LOCAL: "1) Local files (run from repo root; `.` = cwd)",
+    SetupBranch.GIT: "2) Git repo (clone to cwd subdirectory)",
 }
 
 
-def prompt_api_base_url(config: ScoutConfig) -> str:
-    """Prompt for full Scout API base URL."""
-    default = config.api_base_url or DEFAULT_API_BASE_URL
+def prompt_api_base_url(config: ScoutConfig, *, discovered: str | None = None) -> str:
+    """Prompt for Scout API base URL; default to detected running serve when present."""
+    default = discovered or config.api_base_url or DEFAULT_API_BASE_URL
+    if discovered:
+        console_print(f"Detected scout serve at {discovered}")
     while True:
         raw = typer.prompt("Scout API base URL", default=default)
         try:
@@ -57,7 +51,7 @@ def prompt_api_base_url(config: ScoutConfig) -> str:
 
 
 def prompt_setup_branch() -> SetupBranch:
-    """Present 4-branch setup menu."""
+    """Present file-source setup menu (graph-only indexing)."""
     console_print("Setup branch:")
     for branch in SetupBranch:
         console_print(f"  {BRANCH_LABELS[branch]}")

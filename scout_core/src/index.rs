@@ -27,6 +27,11 @@ fn register_vec_extension() -> ScoutResult<()> {
     Ok(())
 }
 
+/// Returns true when sqlite vector index exists on disk.
+pub fn index_exists(path: &Path) -> bool {
+    path.is_file()
+}
+
 /// Open or create per-space sqlite-vec database.
 pub fn open_index(path: &Path) -> ScoutResult<Connection> {
     if let Some(parent) = path.parent() {
@@ -232,6 +237,27 @@ pub fn get_chunk(conn: &Connection, node_id: &str) -> ScoutResult<RawSearchHit> 
         }
         other => ScoutError::Sqlite(other),
     })
+}
+
+/// Session index stats: (chunk_count, distinct rel_path count).
+pub fn session_index_stats(conn: &Connection) -> ScoutResult<(usize, usize)> {
+    let table_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chunks'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if table_exists == 0 {
+        return Ok((0, 0));
+    }
+    let chunk_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+        .unwrap_or(0);
+    let file_count: i64 = conn
+        .query_row("SELECT COUNT(DISTINCT rel_path) FROM chunks", [], |r| r.get(0))
+        .unwrap_or(0);
+    Ok((chunk_count as usize, file_count as usize))
 }
 
 pub fn read_meta(conn: &Connection, key: &str) -> ScoutResult<Option<String>> {

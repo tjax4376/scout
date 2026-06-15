@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from scout.config import ScoutConfig, bootstrap_scout_dir, load_config, save_config
+from scout.config import ScoutConfig, SpaceEntry, bootstrap_scout_dir, load_config, save_config
 from scout.setup.api_url import (
     build_scout_api_url,
     normalize_api_base_url,
@@ -25,6 +25,85 @@ from scout.setup.prompts import (
     prompt_openrouter_api_key,
 )
 from scout.setup.workspace import clone_git_workspace
+
+
+@pytest.mark.asyncio
+async def test_run_setup_uses_selected_src_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Index root follows source-folder picker; skill install stays at workspace anchor."""
+    repo = tmp_path / "repo"
+    src = repo / "src"
+    src.mkdir(parents=True)
+    (src / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    scout_home = tmp_path / ".scout"
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("scout.setup.runner.bootstrap_scout_dir", lambda: scout_home)
+    monkeypatch.setattr("scout.setup.runner.load_config", lambda home: ScoutConfig())
+    monkeypatch.setattr("scout.setup.runner.save_config", lambda home, cfg: None)
+    captured_entry: dict[str, SpaceEntry] = {}
+
+    def capture_register(home, entry, cfg):
+        captured_entry["entry"] = entry
+
+    monkeypatch.setattr("scout.setup.runner.register_space", capture_register)
+    monkeypatch.setattr(
+        "scout.setup.runner.resolve_discovered_api_url",
+        lambda cfg: None,
+    )
+    monkeypatch.setattr(
+        "scout.setup.runner.prompt_api_base_url",
+        lambda cfg, discovered=None: "http://127.0.0.1:8741/v1",
+    )
+    monkeypatch.setattr("scout.setup.runner.ensure_api_port_available", lambda cfg: None)
+    monkeypatch.setattr(
+        "scout.setup.runner.prompt_setup_branch",
+        lambda: __import__("scout.setup.prompts", fromlist=["SetupBranch"]).SetupBranch.LOCAL,
+    )
+    monkeypatch.setattr("scout.setup.runner.resolve_local_root", lambda: repo.resolve())
+    monkeypatch.setattr("scout.setup.runner.prompt_index_subdirectory", lambda anchor: src.resolve())
+    monkeypatch.setattr(
+        "scout.setup.runner.run_prescan",
+        lambda root, globs, paths, **kwargs: MagicMock(total_bytes=1, file_count=1),
+    )
+    monkeypatch.setattr("scout.setup.runner.display_prescan_table", lambda *a, **k: None)
+    monkeypatch.setattr("scout.setup.runner.check_byte_cap", lambda *a, **k: None)
+    monkeypatch.setattr("scout.setup.runner.check_capacity", lambda *a, **k: None)
+    monkeypatch.setattr("scout.setup.runner.write_prescan_json", lambda *a, **k: None)
+
+    def confirm_side_effect(msg: str, default: bool = True) -> bool:
+        if "embed provider" in msg.lower():
+            return False
+        return True
+
+    monkeypatch.setattr("scout.setup.runner.typer.confirm", confirm_side_effect)
+    monkeypatch.setattr(
+        "scout.setup.runner.run_reindex",
+        AsyncMock(return_value="graph-only:v1"),
+    )
+    monkeypatch.setattr("scout.setup.runner.prompt_agent", lambda override: "cursor")
+    monkeypatch.setattr(
+        "scout.setup.runner.prompt_skill_scope",
+        lambda: (False, False),
+    )
+
+    captured: dict[str, object] = {}
+
+    def capture_install(agent, **kwargs):
+        captured["agent"] = agent
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr("scout.setup.runner.install_skill", capture_install)
+
+    from scout.setup.runner import run_setup
+
+    await run_setup("demo")
+
+    assert captured["project_root"] == repo.resolve()
+    assert captured["default_space"] == "demo"
+    assert captured_entry["entry"].root == str(src.resolve())
 
 
 def test_normalize_api_base_url() -> None:
@@ -70,10 +149,8 @@ def test_update_api_base_url_port() -> None:
 
 
 def test_setup_branch_flags() -> None:
-    assert SetupBranch.LOCAL_LOCAL.uses_git is False
-    assert SetupBranch.LOCAL_REMOTE.uses_openrouter is True
-    assert SetupBranch.GIT_LOCAL.uses_git is True
-    assert SetupBranch.GIT_REMOTE.uses_openrouter is True
+    assert SetupBranch.LOCAL.uses_git is False
+    assert SetupBranch.GIT.uses_git is True
 
 
 def test_validate_git_url() -> None:
@@ -171,7 +248,11 @@ def test_serve_uses_parsed_host(monkeypatch: pytest.MonkeyPatch) -> None:
         captured["port"] = port
 
     monkeypatch.setattr(cli_main.uvicorn, "run", fake_uvicorn)
-    monkeypatch.setattr(cli_main, "create_app", lambda: MagicMock())
+    monkeypatch.setattr(
+        cli_main,
+        "create_app",
+        lambda embed_mode=False, warm_cache=True: MagicMock(),
+    )
 
     cli_main.main(["serve"])
 

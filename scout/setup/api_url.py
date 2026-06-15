@@ -1,6 +1,7 @@
 """Scout API base URL helpers.
 
 Metadata: v0.1.0 | Scout Contributors | 2026-06-12
+Updated: 2026-06-14 — detect running scout serve on occupied ports.
 """
 
 from __future__ import annotations
@@ -9,6 +10,8 @@ import re
 import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse
+
+import httpx
 
 from scout.config import DEFAULT_API_PORT_START, ScoutConfig
 
@@ -90,10 +93,60 @@ def find_free_api_port_on_host(
     raise RuntimeError(f"no free API port found on {host} in range {start}-{end}")
 
 
+def probe_scout_health(base_url: str, *, timeout: float = 0.5) -> bool:
+    """Return True when URL responds like Scout GET /v1/health."""
+    url = base_url.rstrip("/")
+    if not url.endswith("/v1"):
+        url = f"{url}/v1"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(f"{url}/health")
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            return isinstance(data, dict) and data.get("status") == "ok"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return False
+
+
+def discover_scout_api_url(
+    host: str = "127.0.0.1",
+    start: int = DEFAULT_API_PORT_START,
+    end: int = API_PORT_RANGE_END,
+) -> str | None:
+    """Scan local ports for a running Scout API."""
+    for port in range(start, end + 1):
+        if not _port_open(host, port):
+            continue
+        candidate = f"http://{host}:{port}/v1"
+        if probe_scout_health(candidate):
+            return candidate
+    return None
+
+
+def resolve_discovered_api_url(config: ScoutConfig) -> str | None:
+    """Prefer configured URL when healthy, else scan default port range."""
+    if config.api_base_url:
+        try:
+            normalized = normalize_api_base_url(config.api_base_url)
+        except ValueError:
+            normalized = ""
+        if normalized and probe_scout_health(normalized):
+            return normalized
+    elif config.api_port:
+        candidate = f"http://127.0.0.1:{config.api_port}/v1"
+        if probe_scout_health(candidate):
+            return candidate
+    return discover_scout_api_url()
+
+
 def ensure_api_port_available(config: ScoutConfig) -> None:
-    """If configured port busy on host, scan and update config URL."""
+    """Keep URL when scout serves there; otherwise pick a free port if occupied."""
     endpoint = parse_api_base_url(build_scout_api_url(config))
     if not _port_open(endpoint.host, endpoint.port):
+        return
+    current = f"{endpoint.scheme}://{endpoint.host}:{endpoint.port}/v1"
+    if probe_scout_health(current):
         return
     new_port = find_free_api_port_on_host(
         endpoint.host,

@@ -1,34 +1,35 @@
 # Scout
 
-**Local code-graph + vector search for coding agents.**
+**Local code graph + optional session vector search for coding agents.**
 
-Scout indexes a workspace, builds a structural code graph, embeds symbol-level chunks, and exposes semantic search over REST. Agents query snippets and graph neighbors instead of loading entire files — saving tokens and surfacing relevant context faster.
+Scout indexes a workspace into a **structural code graph** (`graph.bin`) with `location_ref` file pointers. Agents map connections via REST and read **full source from disk** on demand. Default setup is **graph-only** (no full-repo embed). Opt in to **`scout serve --embed`** for session semantic search on files you read.
 
 ```
-scan → tree-sitter parse → petgraph (in-memory) → sqlite-vec embeddings → REST search
+Default:  scan → tree-sitter → petgraph → graph.bin → REST (/symbols, /neighbors, /file)
+Optional: scout serve --embed → RAM cache + session_index.db → POST /search (read files only)
 ```
 
 | Layer | Technology | Role |
 |-------|------------|------|
-| Engine | Rust (`scout_core`) | Scan, parse, graph, chunk, vector index, search |
-| Shell | Python (`scout/`) | CLI, FastAPI, embed providers, setup wizard, skills |
-| Storage | `.scout/` | Config, secrets, per-space `index.db` + `graph.bin` cache |
-| Agents | Cursor / Pi / OpenCode skills | HTTP search + optional index-first code review |
+| Engine | Rust (`scout_core`) | Scan, parse, graph, vector index, search |
+| Shell | Python (`scout/`) | CLI, FastAPI, embed providers, session worker, skills |
+| Storage | `.scout/` | Config, `graph.bin`, optional `session_index.db` per space |
+| Agents | Cursor / Pi / OpenCode skills | Graph map + search + code review |
 
 ---
 
 ## Quick start
 
-Already on macOS or Linux with Python 3.11+, Rust, and a running embed server (LM Studio, etc.)?
+Already on macOS or Linux with Python 3.11+ and Rust?
 
 ```bash
 git clone https://github.com/tjax4376/scout.git && cd scout
-scripts/scout.sh build dev && source .venv/bin/activate
-scout myapp setup --agent cursor          # wizard: workspace + index + skill
-scout serve                               # separate terminal — REST API
-curl -s http://127.0.0.1:8741/v1/health   # {"status":"ok"}
-scout myapp search "main entry point"     # works without serve too
+scripts/scout.sh build dev              # clean, build, start serve (foreground)
+# other terminal: source .venv/bin/activate
+curl -s http://127.0.0.1:8747/v1/health   # port from "Serving on …" line
 ```
+
+Graph-only setup needs **no embed server**. For `scout serve --embed`, start LM Studio (or OpenRouter) first — see [Embed providers](#embed-providers).
 
 First time? See [Prerequisites](#prerequisites), then pick your OS below.
 
@@ -54,6 +55,7 @@ First time? See [Prerequisites](#prerequisites), then pick your OS below.
 - [Distribution](#distribution)
 - [Project layout](#project-layout)
 - [Further reading](#further-reading)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -63,8 +65,8 @@ First time? See [Prerequisites](#prerequisites), then pick your OS below.
 |-------------|-------|
 | **Python 3.11+** | 3.14 supported with abi3 build flag (see below) |
 | **Rust toolchain** | For building `scout_core` from source (`rustup`, `cargo`) |
-| **Embed endpoint** | Local LLM server (LM Studio, etc.) or OpenRouter API key |
-| **Git** | Only if using setup branch 3 or 4 (clone repo into cwd) |
+| **Embed endpoint** | Only for `scout serve --embed` or legacy vector search — **not** required for graph-only setup |
+| **Git** | Only if using setup branch 2 (clone repo into cwd) |
 
 **Python 3.14:** set `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` when building the Rust extension.
 
@@ -181,9 +183,11 @@ If you want Windows support, **fork the repository and implement it yourself** �
 
 These steps are the same once `scout` runs and prints usage.
 
-### 1. Start your embed server
+### 1. Embed server (only for session search)
 
-Scout needs an embedding model at index and search time. Start your server **before** setup/reindex.
+**Graph-only** setup and review (`/symbols`, `/neighbors`, `/file`) need **no** embed provider.
+
+Start an embed server **before** `scout serve --embed` or CLI search against a vector index:
 
 | Provider | Default port | Example check |
 |----------|--------------|---------------|
@@ -194,13 +198,14 @@ Scout needs an embedding model at index and search time. Start your server **bef
 
 Use an **embedding** model, not a chat model.
 
-### 2. Run setup (creates space + index)
+### 2. Run setup (from repo root)
 
 ```bash
+cd /path/to/your-repo
 scout myapp setup --agent cursor
 ```
 
-Registers space `myapp`, indexes the workspace, installs the `search_scout` skill. See [First-time setup](#first-time-setup-index-a-project) for wizard details.
+Wizard: API URL → local/git branch → workspace `.` → pick `src/` or whole repo → graph index → install `search_scout`.
 
 ### 3. Start the API server
 
@@ -208,11 +213,15 @@ Separate terminal — `scout serve` runs in the foreground:
 
 ```bash
 source .venv/bin/activate
-scout serve
-# Serving on http://127.0.0.1:8741/v1
+scout serve                              # graph-only (default)
+scout serve --embed                      # session search + RAM file cache
+scout serve --embed --no-warm-cache      # skip bulk RAM warm at startup
+# Serving on http://127.0.0.1:8741/v1   ← port in config.yaml
 ```
 
 Or: `scripts/scout.sh start`
+
+If serve refuses to start with `already running` but nothing listens on that port, run `scout stop-serve` first (clears stale PID lock).
 
 ### 4. Verify
 
@@ -220,11 +229,13 @@ Or: `scripts/scout.sh start`
 curl -s http://127.0.0.1:8741/v1/health
 curl -s http://127.0.0.1:8741/v1/spaces/list
 
+# Graph map (works on graph-only serve — no embed)
+curl -s "http://127.0.0.1:8741/v1/spaces/myapp/symbols?path_prefix=src/"
+
+# Session search (requires scout serve --embed + embed provider in config)
 curl -s -X POST http://127.0.0.1:8741/v1/spaces/myapp/search \
   -H "Content-Type: application/json" \
   -d '{"query": "authentication handler", "top_k": 5}'
-
-scout myapp search "authentication handler" --top-k 5   # CLI — no serve required
 ```
 
 ---
@@ -236,21 +247,28 @@ scout myapp search "authentication handler" --top-k 5   # CLI — no serve requi
 | Step | What happens |
 |------|----------------|
 | 1. API base URL | Full URL e.g. `http://127.0.0.1:8741/v1` (port scan `8741`–`8799` if busy) |
-| 2. Setup branch | Pick files source + embed provider (see table below) |
-| 3. Workspace | Local path or `git clone --depth 1` into cwd subdirectory |
-| 4. Embed | Provider auth, model pick, dimension probe |
-| 5. Prescan | File count, size, language breakdown, capacity gate |
-| 6. Index | Full synchronous reindex (scan → graph → embed → atomic swap) |
-| 7. Agent skill | Install `search_scout` with injected API URL + space name |
+| 2. Setup branch | Local path **or** git clone into cwd subdirectory |
+| 3. Workspace | Run from **repo root**; workspace path default `.` (= cwd); pick `src/` or whole repo |
+| 4. Prescan | File count, size, language breakdown, capacity gate |
+| 5. Index | Graph-only reindex (scan → graph → `graph.bin`; no embed, no `index.db`) |
+| 6. Agent skill | Install `search_scout` at repo root with injected API URL + space name |
+
+Setup installs **`search_scout` only**. Install **`code-reviewer-scout`** separately after serve is running (see [Agent skills](#agent-skills)).
+
+If setup was interrupted or config is invalid, later CLI commands print friendly errors (not tracebacks) with a setup hint.
 
 ### Setup branches
 
-| Branch | Files | Embed |
-|--------|-------|-------|
-| **1** | Local path | Local LLM (`lmstudio` / `omlx` / `unsloth-studio`) |
-| **2** | Local path | OpenRouter |
-| **3** | Git clone → cwd | Local LLM |
-| **4** | Git clone → cwd | OpenRouter |
+Run `scout <space> setup` from your **repository top level** (normally your cwd).
+
+| Branch | Files |
+|--------|-------|
+| **1** | Local — workspace path default `.` (current directory), then pick index folder (`src/`, etc.) or entire repo |
+| **2** | Git clone → cwd subdirectory, then same index folder picker |
+
+**Workspace path:** `.` or `./` means cwd. After the anchor is set, setup lists immediate child directories (excluding `node_modules`, `.git`, etc.) so you can index `src/` without typing paths.
+
+No embed provider required. Each graph node includes `location_ref` (e.g. `src=/src/auth.py`) for agent file resolution via `GET /file`.
 
 ```bash
 # Interactive (picks agent at prompt)
@@ -266,7 +284,7 @@ API key prompts offer **leave blank to keep** if a key already exists in `~/.sco
 
 ### Reindex an existing space
 
-After code changes or embed config changes:
+After code changes:
 
 ```bash
 scout myapp reindex
@@ -277,20 +295,63 @@ scout myapp reindex --force          # bypass 100GB byte-cap warning
 
 ## Day-to-day workflow
 
+### Setup flow (first time)
+
+```mermaid
+flowchart TD
+  A["cd repo root"] --> B["scout myapp setup --agent cursor"]
+  B --> C["API URL + branch: local or git clone"]
+  C --> D["Workspace `.` + pick src/ or whole repo"]
+  D --> E["Prescan capacity gate"]
+  E --> F["Graph reindex → graph.bin"]
+  F --> G["Install search_scout skill"]
+```
+
+### Graph-first review (default — no embed)
+
 ```mermaid
 flowchart LR
-  A[Code changes] --> B{Stale?}
-  B -->|yes| C["scout myapp reindex"]
-  B -->|no| D[scout serve]
-  C --> D
-  D --> E[Agent / curl search]
-  E --> F[Optional: GET /node/id]
+  S[Scope path_prefix] --> M["GET /symbols"]
+  M --> N["GET /neighbors"]
+  N --> R["GET /file line range"]
+  R --> A[Audit]
 ```
 
 1. **Edit code** in the indexed workspace.
-2. **Reindex** when search feels stale (`stale: true` in response, or `X-Scout-Stale: true` header).
-3. **Keep serve running** while agents use the REST API.
-4. **Stop serve** when done: `scout stop-serve` (from another terminal).
+2. **Reindex** when graph feels stale (`X-Scout-Stale: true`).
+3. **Serve** — `scout serve` (graph-only) or `scout serve --embed` (adds session search).
+4. **Map** — `GET /symbols` + `GET /neighbors` (no embed call).
+5. **Read** — `GET /file` for authoritative source; `GET /node/{id}` for metadata + indexed text when embedded.
+6. **Stop** — `scout stop-serve` from another terminal.
+
+### Session embed search (`scout serve --embed`)
+
+```mermaid
+sequenceDiagram
+  participant Agent
+  participant API as scout serve --embed
+  participant Cache as RAM file cache
+  participant Worker as embed worker
+  participant DB as session_index.db
+
+  Agent->>API: GET /symbols
+  API-->>Agent: graph from memory
+
+  Agent->>API: GET /file?rel_path=…
+  API-->>Agent: live disk text
+  API->>Worker: enqueue embed job
+
+  Worker->>Worker: compress chunk text
+  Worker->>DB: vectors + compressed text
+
+  Agent->>API: POST /search
+  API->>DB: vector search
+  API-->>Agent: hits + compressed_text
+```
+
+**Session search rules:** only files read via `GET /file` in this serve session are searchable. Read files first, then search. Hits include `compressed_text` (what was embedded). Full source always via `GET /file`.
+
+**Tip:** After port or API URL change, reinstall skills (`--force`).
 
 ---
 
@@ -306,7 +367,7 @@ scout <space> reindex [--force] [--embed-batch N] [--reprobe-embed-batch]
 
 scout <space> search  <query> [--top-k N]
 
-scout serve
+scout serve [--embed] [--no-warm-cache]
 scout stop-serve
 ```
 
@@ -320,6 +381,8 @@ scout stop-serve
 | Search (no serve needed) | `scout myapp search "error handling"` |
 | Limit search results | `scout myapp search "handler" --top-k 5` |
 | Start REST API | `scout serve` |
+| Start with session embed | `scout serve --embed` |
+| Session embed, lazy RAM cache | `scout serve --embed --no-warm-cache` |
 | Stop REST API | `scout stop-serve` |
 | Auto embed batch (default) | `scout myapp reindex` |
 | Fixed embed batch size | `scout myapp reindex --embed-batch 512` |
@@ -330,9 +393,48 @@ scout stop-serve
 ```bash
 scout cursor setup              # wrong — "cursor" parsed as space name
 scout myapp setup --agent cursor   # correct
+
+scout scour search "auth"       # wrong — typo in space name (traceback-free error)
+scout scout search "auth"       # correct — if space is named "scout"
 ```
 
 `scout` with no arguments prints usage.
+
+### Error handling
+
+CLI failures print **short, actionable messages** to stderr — not Python tracebacks. Every handled error ends with:
+
+```
+Thanks for using Scout.
+```
+
+**Unknown space** (typo or space not set up):
+
+```
+Unknown space: scour
+
+Configured spaces: scout, myapp
+Run: scout <space> setup
+
+Thanks for using Scout.
+```
+
+**Broken or incomplete setup** (missing embed config, bad YAML, missing space root):
+
+```
+Embed provider not configured.
+Run: scout <space> setup
+
+Thanks for using Scout.
+```
+
+**Developer mode** — full traceback on unexpected errors:
+
+```bash
+SCOUT_DEBUG=1 scout myapp search "query"
+```
+
+Exit codes: `0` for help / successful `stop-serve` when not running; `1` for validation and runtime failures.
 
 ### Embed batch sizing
 
@@ -342,17 +444,51 @@ By default (`--embed-batch 0`), Scout probes the embed provider's `/models` meta
 
 ## REST API
 
-Start with `scout serve`. Base URL is configured at setup (default `http://127.0.0.1:8741/v1`). One server instance serves **all** spaces in config.
+Start with `scout serve` (or `scout serve --embed` for session semantic search). Base URL is configured at setup (default `http://127.0.0.1:8741/v1`). One server instance serves **all** spaces in config.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/health` | Liveness check |
 | `GET` | `/v1/spaces/list` | List configured spaces |
-| `POST` | `/v1/spaces/{space}/search` | Vector search + graph neighbors |
-| `GET` | `/v1/spaces/{space}/node/{node_id}` | Full indexed chunk for one node |
-| `POST` | `/v1/spaces/{space}/reindex` | Synchronous full index rebuild |
+| `POST` | `/v1/spaces/{space}/search` | Vector search (503 graph-only; session index with `--embed`) |
+| `GET` | `/v1/spaces/{space}/node/{node_id}` | Node metadata + `location_ref` |
+| `GET` | `/v1/spaces/{space}/node/{node_id}/neighbors` | Graph neighbor expansion |
+| `GET` | `/v1/spaces/{space}/symbols` | List symbols under `path_prefix` |
+| `GET` | `/v1/spaces/{space}/file` | Read workspace file or line range |
+| `GET` | `/v1/spaces/{space}/session/status` | Session embed stats (`--embed` only) |
+| `DELETE` | `/v1/spaces/{space}/session/index` | Clear session index (`--embed` only) |
+| `POST` | `/v1/spaces/{space}/reindex` | Synchronous graph rebuild |
+
+### Session embed (`scout serve --embed`)
+
+Opt-in semantic search without full-repo embed at setup:
+
+1. Configure embed provider in setup (or `config.yaml` + `secrets.yaml`)
+2. Run `scout serve --embed` — warms gitignore-filtered source into RAM (prescan-gated); loads graph into memory; clears `session_index.db` per space
+3. Agent reads files via `GET /file` — each path embeds in background (deduped); chunk text served from cache when fresh
+4. `POST /search` returns hits from **read files only** (`session_scoped: true`); each hit includes `compressed_text` (full indexed chunk body)
+
+Use `scout serve --embed --no-warm-cache` to skip bulk RAM warm (lazy cache on first read). Scan/reindex honor `.gitignore` by default (`respect_gitignore: true` per space).
+
+Chunks are **compressed before embed** (whitespace collapse; optional line-comment strip via `embed.compress_strip_line_comments`) to reduce token count and speed indexing. Full source remains on disk via `GET /file`.
+
+```yaml
+embed:
+  compress_chunks: true
+  compress_strip_line_comments: false
+```
+
+Graph-only default unchanged: `scout serve` without `--embed`.
 
 Interactive docs: `GET /docs` (Swagger UI). OpenAPI: `GET /v1/openapi.json`.
+
+After upgrading Scout, confirm graph routes exist:
+
+```bash
+curl -s http://127.0.0.1:8741/v1/openapi.json | grep -E 'symbols|neighbors|/file'
+```
+
+If missing, restart `scout serve` from a current build and reinstall agent skills.
 
 ### Search request
 
@@ -390,6 +526,7 @@ curl -s -X POST "http://127.0.0.1:8741/v1/spaces/myapp/search" \
       "end_line": 78,
       "score": 0.87,
       "snippet": "export async function handleAuth…",
+      "compressed_text": "export async function handleAuth(req: Request) {\n  const token = …",
       "breadcrumb": "src > api > handlers.ts > handleAuth",
       "neighbors": [
         { "node_id": "…", "kind": "function", "symbol": "verifyToken", "edge": "imports", "depth": 2 }
@@ -397,17 +534,84 @@ curl -s -X POST "http://127.0.0.1:8741/v1/spaces/myapp/search" \
     }
   ],
   "stale": false,
-  "index_version": "8f3a2b1c9d0e"
+  "index_version": "graph-only:v1",
+  "session_scoped": true
 }
 ```
 
+| Field | Description |
+|-------|-------------|
+| `snippet` | Short preview (~500 chars) for discovery |
+| `compressed_text` | Full indexed chunk body (post-compression when enabled) — what was embedded |
+| `session_scoped` | `true` when hits come from `scout serve --embed` session index |
+
 Response headers: `X-Scout-Stale`, `X-Scout-Index-Version`.
 
+Use `compressed_text` or `GET /file` for full context — not `snippet` alone.
+
+### Graph map (no embed)
+
+List symbols in a module or directory — does **not** call the embed provider:
+
+```bash
+curl -s "http://127.0.0.1:8741/v1/spaces/myapp/symbols?path_prefix=scout/embed/"
+curl -s "http://127.0.0.1:8741/v1/spaces/myapp/symbols?path_prefix=src/api/&kinds=function"
+```
+
+Expand connections from any node (imports, calls, contains):
+
+```bash
+curl -s "http://127.0.0.1:8741/v1/spaces/myapp/node/NODE_ID/neighbors?depth=3&max_nodes=50"
+```
+
+| Param | Default | Range | Description |
+|-------|---------|-------|-------------|
+| `depth` | `3` | `1`–`5` | BFS depth from node |
+| `max_nodes` | `50` | `1`–`100` | Max neighbors returned |
+
 ### Node lookup
+
+Returns metadata, `location_ref`, and indexed chunk text when present:
 
 ```bash
 curl -s "http://127.0.0.1:8741/v1/spaces/myapp/node/NODE_ID_FROM_HIT"
 ```
+
+```json
+{
+  "node_id": "…",
+  "kind": "function",
+  "symbol": "handleAuth",
+  "rel_path": "src/api/handlers.ts",
+  "location_ref": "src=/src/api/handlers.ts",
+  "start_line": 42,
+  "end_line": 78,
+  "score": 0.0,
+  "text": "… indexed chunk (compressed when compression on) …",
+  "compressed_text": "… same as text when indexed …",
+  "breadcrumb": "src > api > handlers.ts > handleAuth",
+  "neighbors": []
+}
+```
+
+Graph-only serve without session index: `text` and `compressed_text` are empty — use `GET /file` for source.
+
+### Workspace file read (live disk)
+
+Read source from the workspace filesystem — useful for end-to-end file review and line-range context:
+
+```bash
+curl -s "http://127.0.0.1:8741/v1/spaces/myapp/file?rel_path=scout/api/app.py"
+curl -s "http://127.0.0.1:8741/v1/spaces/myapp/file?rel_path=scout/api/app.py&start_line=80&end_line=150"
+```
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `rel_path` | yes | File path relative to space root |
+| `start_line` | no | 1-based start (inclusive) |
+| `end_line` | no | 1-based end (inclusive) |
+
+Returns `413` if response exceeds 512 KiB — narrow the line range. Path traversal (`..`) returns `400`.
 
 ### Reindex via API
 
@@ -416,6 +620,21 @@ curl -s -X POST "http://127.0.0.1:8741/v1/spaces/myapp/reindex"
 ```
 
 Returns `409` if a reindex is already in progress.
+
+### CLI vs API
+
+| Action | CLI (no serve) | REST API |
+|--------|----------------|----------|
+| Search | `scout <space> search "<query>" [--top-k N]` | `POST /v1/spaces/{space}/search` |
+| Reindex | `scout <space> reindex [--force]` | `POST /v1/spaces/{space}/reindex` |
+| List symbols | — | `GET /v1/spaces/{space}/symbols?path_prefix=…` |
+| Graph neighbors | — | `GET /v1/spaces/{space}/node/{id}/neighbors` |
+| Full symbol chunk | — | `GET /v1/spaces/{space}/node/{id}` |
+| File read | — | `GET /v1/spaces/{space}/file?rel_path=…` |
+| Health | — | `GET /v1/health` |
+| List spaces | — | `GET /v1/spaces/list` |
+
+CLI search/reindex use pyo3 directly; they do not route through HTTP even when serve is running. Graph and file endpoints are **API only**.
 
 **Full API reference:** [`api-contracts.md`](api-contracts.md)
 
@@ -427,13 +646,15 @@ Scout ships skill templates that agents invoke via REST. Setup installs `search_
 
 ### search_scout (installed by setup)
 
-Teaches agents to search the codebase via Scout REST with graph neighbor context.
+Teaches agents to map and search the codebase via Scout REST.
 
 | Agent | Project install path |
 |-------|---------------------|
 | Cursor | `<project>/.cursor/skills/search_scout/` |
 | Pi | `<project>/.pi/skills/search-scout/` |
 | OpenCode | `<project>/.opencode/skills/search_scout/` |
+
+Default workflow: `/symbols` → `/file`. With `scout serve --embed`, `POST /search` returns `compressed_text` for files read in session.
 
 Helper script (after install):
 
@@ -444,7 +665,11 @@ python skills/search_scout/scripts/scout_api.py health
 
 ### code-reviewer-scout (standalone install)
 
-Token-efficient code review: search snippets and neighbors **before** reading full files.
+**Graph-first code review:** symbols → neighbors → targeted read. With **`scout serve --embed`**, adds session semantic search on files you read.
+
+**Hard rule:** `GET /symbols` before any `GET /file`.
+
+**Workflow:** scope → **symbols (required)** → neighbors (optional) → read (`/file`) → search (optional, `--embed`) → audit
 
 ```bash
 python -m scout.code_reviewer \
@@ -452,8 +677,13 @@ python -m scout.code_reviewer \
   --project \
   --project-root . \
   --scout-api http://127.0.0.1:8741/v1 \
-  --default-space myapp
+  --default-space myapp \
+  --force
 ```
+
+**Session search:** run `scout serve --embed`, read files via `GET /file`, then `POST /search`. Hits include `compressed_text` (indexed chunk body). Full source via `GET /file`.
+
+Use the **same** `api_base_url` shown by `scout serve` (check `config.yaml` if serve is not running).
 
 | Agent | Project install path |
 |-------|---------------------|
@@ -464,8 +694,15 @@ python -m scout.code_reviewer \
 Review helper:
 
 ```bash
-python skills/code-reviewer-scout/scripts/review_api.py search myapp \
-  "validate token" --path-prefix src/api/ --top-k 5
+# Step 2 — required before any file read
+python skills/code-reviewer-scout/scripts/review_api.py map myapp scout/embed/
+
+# Step 3 — optional graph expansion
+python skills/code-reviewer-scout/scripts/review_api.py neighbors myapp NODE_ID
+
+# Step 4 — read using line numbers from symbol results
+python skills/code-reviewer-scout/scripts/review_api.py node myapp NODE_ID
+python skills/code-reviewer-scout/scripts/review_api.py file myapp scout/api/app.py --start-line 80 --end-line 150
 ```
 
 ---
@@ -476,7 +713,7 @@ Scout stores state under `.scout/` (project-local if present, else `~/.scout/`).
 
 ```
 .scout/
-├── config.yaml          # spaces, embed provider, API URL, cached batch size
+├── config.yaml          # spaces, embed, API URL, compression flags
 ├── secrets.yaml         # API keys only (chmod 600)
 ├── scout.pid            # running serve PID
 ├── cache/
@@ -484,7 +721,8 @@ Scout stores state under `.scout/` (project-local if present, else `~/.scout/`).
 │       └── graph.bin    # petgraph snapshot
 └── spaces/
     └── <space>/
-        ├── index.db     # sqlite-vec chunks + embeddings
+        ├── session_index.db   # session vectors (--embed only; cleared each serve)
+        ├── index.db           # legacy full-repo index (optional)
         ├── manifest.json
         └── prescan.json
 ```
@@ -496,7 +734,8 @@ api_base_url: http://127.0.0.1:8741/v1
 api_port: 8741
 spaces:
   myapp:
-    root: /path/to/project
+    root: /path/to/project/src    # or whole repo if you picked option 0 at setup
+    respect_gitignore: true       # scan/reindex + RAM cache warm honor .gitignore
     skip:
       globs: []
       paths: ["vendor/"]
@@ -505,7 +744,9 @@ embed:
   model: text-embedding-nomic-embed-text-v1.5
   endpoint: http://127.0.0.1:1234/v1
   dimensions: 768
-  embed_batch_size: 4096   # 0 = auto-probe at next reindex
+  embed_batch_size: 10             # default; 0 = auto-probe
+  compress_chunks: true           # whitespace collapse before session embed
+  compress_strip_line_comments: false
 ```
 
 ### Secrets (`secrets.yaml`)
@@ -537,50 +778,61 @@ Scout uses **provider-scoped** API keys (`get_embed_api_key(secrets, provider)`)
 ```mermaid
 flowchart TB
   subgraph agents [Coding agents]
-    SK[search_scout skill]
-    CR[code-reviewer-scout skill]
+    SK[search_scout]
+    CR[code-reviewer-scout]
   end
 
   subgraph python [Python shell]
     CLI[scout CLI]
     API[FastAPI /v1]
-    EMB[embed providers HTTP]
+    SESS[session worker + RAM cache]
+    CMP[embed/compress]
+    EMB[embed providers]
     SET[setup wizard]
   end
 
-  subgraph rust [scout_core Rust]
+  subgraph rust [scout_core]
     SCAN[scan + parse]
     GRAPH[petgraph]
-    IDX[sqlite-vec index]
-    SRCH[vector search + neighbors]
+    VEC[sqlite-vec search]
   end
 
   subgraph disk [.scout/]
     GB[graph.bin]
-    DB[index.db]
+    SID[session_index.db]
     CFG[config.yaml]
   end
 
   SK --> API
   CR --> API
   CLI --> SCAN
-  CLI --> SRCH
-  API --> SRCH
-  API --> EMB
+  API --> GRAPH
+  API --> VEC
+  API --> SESS
+  SESS --> CMP
+  SESS --> EMB
+  SESS --> SID
+  SCAN --> GRAPH --> GB
+  EMB --> VEC
   SET --> CLI
-  SCAN --> GRAPH
-  GRAPH --> GB
-  EMB --> IDX
-  IDX --> DB
-  SRCH --> GB
-  SRCH --> DB
 ```
 
-**Pipeline:** folder scan → tree-sitter AST (Python, JS/TS, Rust, Go) → in-memory petgraph (`contains`, `imports`, `calls` edges) → symbol-level chunks → batched embeddings → atomic index swap.
+### Two serve modes
 
-**Search neighbors:** anchor pivot — up 1 via `contains`, BFS down depth ≤ 3, cap 20 neighbors.
+| Mode | Command | Graph | Vector search | Embed provider |
+|------|---------|-------|---------------|----------------|
+| **Graph-only** | `scout serve` | `graph.bin` on disk | 503 (unless legacy `index.db`) | Not required |
+| **Session embed** | `scout serve --embed` | In-memory cache | `session_index.db` (files you read) | Required in config |
 
-**Staleness:** index marked stale when files change on disk or embed config changes. Stale indexes still return results; reindex to refresh.
+**Default pipeline:** scan → tree-sitter AST → `graph.bin` (connections + `location_ref`). No full-repo embed at setup.
+
+**Session embed pipeline:** `GET /file` → compress chunk → embed → `session_index.db`. Search returns `compressed_text` + `snippet`.
+
+**On-demand source:** `GET /file` always reads live workspace disk (authoritative). Indexed text is for discovery only.
+
+**Gitignore:** when `respect_gitignore: true`, scan/reindex and `--embed` RAM warm skip ignored paths.
+
+**Staleness:** reindex when `X-Scout-Stale: true` before critical audits.
 
 ---
 
@@ -606,9 +858,9 @@ scripts/scout.sh start
 
 | Command | Action |
 |---------|--------|
-| `scripts/scout.sh build dev` | `.venv` + `maturin develop --release` |
+| `scripts/scout.sh build dev` | Clean, build, activate `.venv`, start `scout serve` (foreground) |
 | `scripts/scout.sh build production` | Release wheel → `.venv-prod` |
-| `scripts/scout.sh start` | `scout serve` from dev venv |
+| `scripts/scout.sh start` | Serve only — skip build (dev venv) |
 | `scripts/scout.sh start production` | `scout serve` from prod venv |
 | `scripts/scout.sh validate` | OpenSpec + API contract sync checks |
 
@@ -650,14 +902,15 @@ bash scripts/verify_pipx_install.sh
 scout_core/              # Rust engine (pyo3) — scan, parse, graph, search
 scout/
   api/                   # FastAPI REST (/v1)
-  cli/                   # CLI entry (setup, reindex, search, serve)
-  code_reviewer/         # Standalone code-reviewer-scout skill installer
+  cli/                   # CLI entry + errors.py (graceful exit)
+  code_reviewer/         # code-reviewer-scout skill installer
   config.py              # .scout/ config + secrets
-  embed/                 # Embed provider registry + batch probe
-  indexing.py            # Reindex orchestration
+  embed/                 # Provider registry, batch probe, chunk compression
+  indexing.py            # Graph-only reindex orchestration
   prescan/               # Capacity gate + prescan metrics
   serve/                 # stop-serve lifecycle
-  setup/                 # Unified 4-branch setup wizard
+  session/               # Embed queue, worker, graph cache, session index
+  setup/                 # Setup wizard (cwd `.`, src folder picker)
   skill/                 # search_scout skill installer
 skills/
   search_scout/          # Agent search skill template
@@ -677,6 +930,8 @@ api-contracts.md         # Full REST API reference
 | Document | Contents |
 |----------|----------|
 | [`api-contracts.md`](api-contracts.md) | Complete REST API with examples (curl, Python, JS) |
+| [`openspec/changes/reviewer-on-demand-chunks/`](openspec/changes/reviewer-on-demand-chunks/) | Graph map + on-demand read design |
+| [`openspec/changes/cli-graceful-errors/`](openspec/changes/cli-graceful-errors/) | CLI friendly errors + farewell message |
 | [`scope/scout-simple-mvp1.md`](scope/scout-simple-mvp1.md) | MVP1 requirements and architecture decisions |
 | [`scout_core/README.md`](scout_core/README.md) | Rust engine modules and build |
 | [`scout/api/README.md`](scout/api/README.md) | FastAPI app notes |
@@ -688,13 +943,15 @@ api-contracts.md         # Full REST API reference
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| Search returns 500 / `ConnectError` | Embed server not running | Start LM Studio (or provider) on configured port; `curl …/v1/models` |
-| Search returns 401 | Wrong API key sent to local provider | Update key in `secrets.yaml` via setup; ensure provider-scoped key |
+| Search returns **503** | Graph-only serve, no legacy index | Use `scout serve --embed` + read files via `GET /file` first; or use `/symbols` + `/file` |
+| Search returns 500 / `ConnectError` | Embed server not running | Start LM Studio; graph endpoints work without embed |
+| Search returns 401 | Wrong API key | Update `secrets.yaml`; use provider-scoped key |
 | `scout serve already running` | Stale PID file | `scout stop-serve` then `scout serve` |
+| `Unknown space: …` | Typo or space not set up | `scout <space> setup` from repo root |
+| `not enough capacity` on `--embed` | RAM warm exceeds prescan gate | `scout serve --embed --no-warm-cache` or narrow space root |
+| Agent hits wrong API | Stale skill install | Reinstall with `--force` and current `--scout-api` |
 | `scout_core not built` | Rust extension missing | `scripts/scout.sh build dev` |
-| `stale: true` in search | Files or embed config changed | `scout <space> reindex` |
-| pipx `scout` wrong CLI | Name collision with PyPI scout 4.x | `pipx uninstall scout && pipx install dist/scout-0.1.0-*.whl` |
-| Reindex panic on UTF-8 | Stale wheel before chunk fix | Rebuild wheel and reinstall |
+| `stale: true` | Files changed on disk | `scout <space> reindex` |
 
 ---
 

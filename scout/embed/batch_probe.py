@@ -17,7 +17,8 @@ from scout.embed.registry import EmbedProvider, OpenAICompatProvider, OpenRouter
 from scout.prescan.runner import _available_ram_bytes
 
 DEFAULT_PROBE_CHARS = 3072
-MIN_EMBED_BATCH = 64
+MIN_EMBED_BATCH = 1
+DEFAULT_EMBED_BATCH_FALLBACK = 10
 PROBE_BATCH_CAP = 131_072
 RAM_FRACTION_FOR_EMBED_BATCH = 0.15
 CHARS_PER_TOKEN = 4
@@ -222,7 +223,10 @@ async def compute_embed_batch_size(
             parts.append(f"context={ctx}")
         detail = ", ".join(parts) if parts else "models API"
         return batch, f"provider metadata ({detail})"
-    return max(MIN_EMBED_BATCH, min(hw, 4096)), "host RAM estimate (no provider limits in /models)"
+    return (
+        max(MIN_EMBED_BATCH, min(hw, DEFAULT_EMBED_BATCH_FALLBACK)),
+        "host RAM estimate (no provider limits in /models)",
+    )
 
 
 async def resolve_embed_batch_size(

@@ -30,8 +30,13 @@ Path convention: `{BASE}` = configured base URL including `/v1`, e.g. `http://12
 |--------|------|-------------|
 | `GET` | `/v1/health` | Liveness check |
 | `GET` | `/v1/spaces/list` | List configured spaces |
-| `POST` | `/v1/spaces/{space}/search` | Vector search + graph neighbors |
-| `GET` | `/v1/spaces/{space}/node/{node_id}` | Lookup single indexed node |
+| `POST` | `/v1/spaces/{space}/search` | Vector search (503 graph-only; session index with `--embed`) |
+| `GET` | `/v1/spaces/{space}/node/{node_id}` | Node metadata + `location_ref` (+ chunk `text` if legacy index) |
+| `GET` | `/v1/spaces/{space}/node/{node_id}/neighbors` | Graph neighbor expansion (no embed) |
+| `GET` | `/v1/spaces/{space}/symbols` | List graph nodes under `path_prefix` (no embed) |
+| `GET` | `/v1/spaces/{space}/file` | Read workspace source file or line range |
+| `GET` | `/v1/spaces/{space}/session/status` | Session embed queue/index stats (`scout serve --embed` only) |
+| `DELETE` | `/v1/spaces/{space}/session/index` | Clear session vector index (`scout serve --embed` only) |
 | `POST` | `/v1/spaces/{space}/reindex` | Synchronous full index rebuild |
 
 ---
@@ -135,7 +140,10 @@ curl -s -X POST "{BASE}/spaces/${SPACE}/search" \
 
 ### `POST /v1/spaces/{space}/search`
 
-Vector similarity search over indexed code chunks. Query text is embedded server-side using the space's configured embed provider. Results include snippets, breadcrumbs, and structural neighbors.
+Vector similarity search over indexed code chunks.
+
+- **Graph-only** (default `scout serve`): returns **503** unless legacy `index.db` exists — use `/symbols`, `/neighbors`, and `/file`.
+- **`scout serve --embed`**: searches **session index** (`session_index.db`) built from files read via `GET /file` during the current serve session. Empty session → `200` with `"hits": []` and `"session_scoped": true`. Requires embed provider in `config.yaml`.
 
 #### Path parameters
 
@@ -171,6 +179,7 @@ Body:
       "end_line": 78,
       "score": 0.87,
       "snippet": "export async function handleAuth(req: Request) {\n  const token = req.headers.get('authorization')…",
+      "compressed_text": "export async function handleAuth(req: Request) {\n  const token = req.headers.get('authorization');\n  …",
       "breadcrumb": "src > api > handlers.ts > handleAuth",
       "neighbors": [
         {
@@ -208,6 +217,8 @@ Response headers:
 
 **Snippet:** Up to ~500 characters of chunk text; longer text truncated with `…`.
 
+**compressed_text:** Full stored indexed chunk body (post-compression when `embed.compress_chunks` is enabled). Use for reading exactly what was embedded; use `GET /file` for authoritative workspace source.
+
 **Neighbors:** Anchor pivot — up 1 via `contains` to parent, then BFS down depth ≤ 3 via `contains`, `imports`, `calls`. Max 20 neighbors; anchor excluded.
 
 #### Error responses
@@ -215,6 +226,7 @@ Response headers:
 | Status | Condition | Body example |
 |--------|-----------|--------------|
 | `404` | Unknown `space` | `{"detail": "unknown space: myapp"}` |
+| `503` | No vector index (`index.db` missing) | `{"detail": {"error": "vector index not available; use /symbols, /neighbors, and /file"}}` |
 | `422` | Invalid body (e.g. `top_k` out of range) | FastAPI validation `detail` array |
 | `500` | `scout_core` not installed | `{"detail": "scout_core not installed"}` |
 
@@ -311,7 +323,7 @@ console.log(data.hits.map((h) => [h.score, h.breadcrumb]));
 
 ### `GET /v1/spaces/{space}/node/{node_id}`
 
-Fetch one indexed node by ID (from search results). Same hit shape as search, but no similarity ranking context.
+Fetch one graph node by ID. Returns metadata, `location_ref` (`{folder}={/rel_path}`), line range, and neighbors. In **graph-only** spaces, `text` is empty — use `GET /file` with `rel_path` and line range. Legacy spaces with `index.db` return full chunk text in `text`.
 
 #### Path parameters
 
@@ -322,24 +334,24 @@ Fetch one indexed node by ID (from search results). Same hit shape as search, bu
 
 #### Response `200 OK`
 
-Single `SearchHit` object (not wrapped in `hits`):
-
 ```json
 {
   "node_id": "a1b2c3d4e5f67890",
   "kind": "function",
   "symbol": "handleAuth",
   "rel_path": "src/api/handlers.ts",
+  "location_ref": "src=/src/api/handlers.ts",
   "start_line": 42,
   "end_line": 78,
   "score": 0.0,
-  "snippet": "export async function handleAuth(req: Request) { … }",
+  "text": "",
+  "compressed_text": "",
   "breadcrumb": "src > api > handlers.ts > handleAuth",
   "neighbors": []
 }
 ```
 
-`score` is always `0.0` for direct lookup (no vector query). `snippet` is still capped at ~500 characters.
+`score` is always `0.0` for direct lookup. Parse `location_ref` after `=` for workspace path (leading `/` optional on `/file`). When a chunk exists in the index, `text` and `compressed_text` contain the stored chunk body (compressed form when compression is enabled). Graph-only nodes leave both empty.
 
 Response headers: same `X-Scout-Stale` and `X-Scout-Index-Version` as search.
 
@@ -370,7 +382,7 @@ NODE_ID=$(curl -s -X POST "{BASE}/spaces/myapp/search" \
   -d '{"query": "handleAuth", "top_k": 1}' \
   | jq -r '.hits[0].node_id')
 
-curl -s "{BASE}/spaces/myapp/node/${NODE_ID}" | jq '.snippet, .neighbors'
+curl -s "{BASE}/spaces/myapp/node/${NODE_ID}" | jq '.text, .neighbors'
 ```
 
 Python:
@@ -387,11 +399,174 @@ print(node["rel_path"], node["start_line"], node["end_line"])
 
 ---
 
-## 5. Reindex
+## 5. Graph neighbors (no embed)
+
+### `GET /v1/spaces/{space}/node/{node_id}/neighbors`
+
+Expand graph connections from a node without vector search. Does not call embed provider.
+
+#### Query parameters
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `depth` | int | `3` | BFS depth (`1`–`5`) |
+| `max_nodes` | int | `50` | Max neighbors (`1`–`100`) |
+
+#### Response `200 OK`
+
+```json
+{
+  "node_id": "a1b2c3d4e5f67890",
+  "neighbors": [
+    {
+      "node_id": "…",
+      "kind": "function",
+      "symbol": "verifyToken",
+      "rel_path": "src/auth/token.ts",
+      "edge": "imports",
+      "depth": 1
+    }
+  ]
+}
+```
+
+#### Example
+
+```bash
+curl -s "{BASE}/spaces/myapp/node/NODE_ID/neighbors?depth=3&max_nodes=50"
+```
+
+---
+
+## 6. Symbol listing (no embed)
+
+### `GET /v1/spaces/{space}/symbols`
+
+List graph nodes under a path prefix without vector search.
+
+#### Query parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `path_prefix` | string | **yes** | Filter `rel_path` prefix (e.g. `scout/embed/`) |
+| `kinds` | string[] | no | Repeat or comma-separated kind filter |
+
+#### Response `200 OK`
+
+```json
+{
+  "symbols": [
+    {
+      "node_id": "…",
+      "kind": "function",
+      "symbol": "resolve_embed_batch_size",
+      "rel_path": "scout/embed/batch_probe.py",
+      "location_ref": "scout=/scout/embed/batch_probe.py",
+      "start_line": 228,
+      "end_line": 250
+    }
+  ]
+}
+```
+
+#### Example
+
+```bash
+curl -s "{BASE}/spaces/myapp/symbols?path_prefix=scout/embed/&kinds=function"
+```
+
+---
+
+## 7. Workspace file read
+
+### `GET /v1/spaces/{space}/file`
+
+Read source from workspace filesystem on demand (live disk, not sqlite chunks).
+
+#### Query parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `rel_path` | string | **yes** | File path relative to space root |
+| `start_line` | int | no | 1-based start line (inclusive) |
+| `end_line` | int | no | 1-based end line (inclusive) |
+
+#### Response `200 OK`
+
+```json
+{
+  "rel_path": "scout/api/app.py",
+  "start_line": 80,
+  "end_line": 125,
+  "text": "...",
+  "total_lines": 186
+}
+```
+
+#### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Path traversal (`..`) or invalid range |
+| `404` | Unknown space or missing file |
+| `413` | Response exceeds 512 KiB (narrow line range) |
+
+#### Example
+
+```bash
+curl -s "{BASE}/spaces/myapp/file?rel_path=scout/api/app.py&start_line=80&end_line=125"
+```
+
+When `scout serve --embed` is active, each successful file read enqueues background embedding for that `rel_path` (deduplicated per session).
+
+---
+
+## 8. Session embed (`scout serve --embed`)
+
+Available only when serve started with `--embed`. Embed provider must be configured in `config.yaml`.
+
+### `GET /v1/spaces/{space}/session/status`
+
+#### Response `200 OK`
+
+```json
+{
+  "space": "myapp",
+  "embed_ready": true,
+  "worker_running": true,
+  "queue_depth": 0,
+  "embedded_file_count": 2,
+  "indexed_file_count": 2,
+  "chunk_count": 14,
+  "cache_file_count": 120,
+  "cache_bytes": 524288,
+  "cache_warm_seconds": 0.42
+}
+```
+
+`cache_*` fields reflect the in-memory file cache warm at serve start (zero when `--no-warm-cache` or lazy-only mode).
+
+Returns `404` when serve runs without `--embed`.
+
+### `DELETE /v1/spaces/{space}/session/index`
+
+Clears session vector index for the space (fresh session within the same serve process).
+
+#### Response `200 OK`
+
+```json
+{
+  "status": "cleared"
+}
+```
+
+---
+
+## 9. Reindex
 
 ### `POST /v1/spaces/{space}/reindex`
 
-Synchronous full rebuild: scan → parse → graph → embed → atomic index swap. Blocks until complete. No request body.
+Synchronous full rebuild: scan → parse → graph → atomic swap. Graph-only (no embed, no `index.db`). Blocks until complete. No request body.
 
 #### Path parameters
 
@@ -514,7 +689,10 @@ embed:
 | Reindex | `scout <space> reindex [--force]` | `POST /v1/spaces/{space}/reindex` |
 | Health | — | `GET /v1/health` |
 | List spaces | — | `GET /v1/spaces/list` |
-| Node lookup | — | `GET /v1/spaces/{space}/node/{node_id}` |
+| Node lookup (full chunk) | — | `GET /v1/spaces/{space}/node/{node_id}` |
+| Graph neighbors | — | `GET /v1/spaces/{space}/node/{node_id}/neighbors` |
+| Symbol listing | — | `GET /v1/spaces/{space}/symbols?path_prefix=…` |
+| File read | — | `GET /v1/spaces/{space}/file?rel_path=…` |
 
 CLI always uses pyo3 direct calls; it does not route through HTTP even when serve is running.
 

@@ -22,7 +22,9 @@ class EmbedConfig:
     model: str = ""
     endpoint: str = ""
     dimensions: int = 0
-    embed_batch_size: int = 0  # 0 = auto-probe at reindex
+    embed_batch_size: int = 10  # 0 = auto-probe; default 10 for session embed
+    compress_chunks: bool = True
+    compress_strip_line_comments: bool = False
 
 
 @dataclass
@@ -31,6 +33,16 @@ class SpaceEntry:
     root: str
     skip_globs: list[str] = field(default_factory=list)
     skip_paths: list[str] = field(default_factory=list)
+    respect_gitignore: bool = True
+
+
+def space_scan_kwargs(entry: SpaceEntry) -> dict[str, object]:
+    """Keyword args for scout_core.py_scan_workspace from a space entry."""
+    return {
+        "skip_globs": entry.skip_globs,
+        "skip_paths": entry.skip_paths,
+        "respect_gitignore": entry.respect_gitignore,
+    }
 
 
 @dataclass
@@ -91,6 +103,11 @@ def index_db_path(home: Path, space: str) -> Path:
     return space_dir(home, space) / "index.db"
 
 
+def session_index_path(home: Path, space: str) -> Path:
+    """Per-space session vector index (cleared on `scout serve --embed` start)."""
+    return space_dir(home, space) / "session_index.db"
+
+
 def manifest_path(home: Path, space: str) -> Path:
     return space_dir(home, space) / "manifest.json"
 
@@ -114,7 +131,15 @@ def load_config(home: Path) -> ScoutConfig:
         model=embed_raw.get("model", ""),
         endpoint=embed_raw.get("endpoint", ""),
         dimensions=int(embed_raw.get("dimensions", 0) or 0),
-        embed_batch_size=int(embed_raw.get("embed_batch_size", 0) or 0),
+        embed_batch_size=int(
+            embed_raw["embed_batch_size"]
+            if "embed_batch_size" in embed_raw
+            else 10
+        ),
+        compress_chunks=bool(embed_raw.get("compress_chunks", True)),
+        compress_strip_line_comments=bool(
+            embed_raw.get("compress_strip_line_comments", False)
+        ),
     )
     spaces: dict[str, SpaceEntry] = {}
     for name, entry in (data.get("spaces", {}) or {}).items():
@@ -123,6 +148,7 @@ def load_config(home: Path) -> ScoutConfig:
             root=entry.get("root", ""),
             skip_globs=list(entry.get("skip", {}).get("globs", []) or []),
             skip_paths=list(entry.get("skip", {}).get("paths", []) or []),
+            respect_gitignore=bool(entry.get("respect_gitignore", True)),
         )
     api_port = int(data.get("api_port", DEFAULT_API_PORT_START))
     api_base_url = str(data.get("api_base_url", "") or "")
@@ -146,6 +172,8 @@ def save_config(home: Path, config: ScoutConfig) -> None:
             "endpoint": config.embed.endpoint,
             "dimensions": config.embed.dimensions,
             "embed_batch_size": config.embed.embed_batch_size,
+            "compress_chunks": config.embed.compress_chunks,
+            "compress_strip_line_comments": config.embed.compress_strip_line_comments,
         },
         "spaces": {},
     }
@@ -153,6 +181,7 @@ def save_config(home: Path, config: ScoutConfig) -> None:
         payload["spaces"][name] = {
             "root": space.root,
             "skip": {"globs": space.skip_globs, "paths": space.skip_paths},
+            "respect_gitignore": space.respect_gitignore,
         }
     config_path(home).write_text(
         yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
@@ -200,6 +229,7 @@ def load_space_config(home: Path, space: str) -> SpaceEntry:
             root=data.get("root", ""),
             skip_globs=list(data.get("skip", {}).get("globs", []) or []),
             skip_paths=list(data.get("skip", {}).get("paths", []) or []),
+            respect_gitignore=bool(data.get("respect_gitignore", True)),
         )
     cfg = load_config(home)
     if space in cfg.spaces:
@@ -213,6 +243,7 @@ def save_space_config(home: Path, space: SpaceEntry) -> None:
     payload = {
         "root": space.root,
         "skip": {"globs": space.skip_globs, "paths": space.skip_paths},
+        "respect_gitignore": space.respect_gitignore,
     }
     dest.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 

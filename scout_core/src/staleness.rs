@@ -6,6 +6,43 @@ use crate::error::{ScoutError, ScoutResult};
 use crate::scan::{scan_workspace, ScanOptions};
 use crate::types::{EmbedManifest, Manifest, ManifestFileEntry, ScannedFile};
 
+/// Graph-only index version identifier.
+pub const GRAPH_ONLY_INDEX_VERSION: &str = "graph-only:v1";
+
+/// Write manifest after graph-only index (no embed metadata required).
+pub fn write_graph_manifest(path: &Path, files: &[ScannedFile]) -> ScoutResult<Manifest> {
+    let mut map = BTreeMap::new();
+    for f in files {
+        map.insert(
+            f.rel_path.clone(),
+            ManifestFileEntry {
+                mtime_secs: f.mtime_secs,
+                size: f.size,
+            },
+        );
+    }
+    let manifest = Manifest {
+        files: map,
+        embed: EmbedManifest {
+            provider: String::new(),
+            model: String::new(),
+            dimensions: 0,
+        },
+        index_version: GRAPH_ONLY_INDEX_VERSION.to_string(),
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(&manifest)?;
+    fs::write(path, json)?;
+    Ok(manifest)
+}
+
+/// True when manifest uses graph-only indexing (no embed staleness checks).
+pub fn is_graph_only_manifest(manifest: &Manifest) -> bool {
+    manifest.index_version.starts_with("graph-only:")
+}
+
 /// Generate index version identifier from embed config + timestamp bucket.
 pub fn generate_index_version(embed: &EmbedManifest) -> String {
     let raw = format!(
@@ -58,8 +95,10 @@ pub fn check_staleness(
         Err(_) => return Ok((true, String::new())),
     };
 
-    if manifest.embed != *current_embed {
-        return Ok((true, manifest.index_version));
+    if !is_graph_only_manifest(&manifest) && !current_embed.provider.is_empty() {
+        if manifest.embed != *current_embed {
+            return Ok((true, manifest.index_version));
+        }
     }
 
     let current_files = scan_workspace(root, scan_options)?;

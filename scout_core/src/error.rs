@@ -18,6 +18,10 @@ pub enum ScoutError {
     ReindexInProgress,
     #[error("Not found: {0}")]
     NotFound(String),
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
     #[error("{0}")]
     Other(String),
 }

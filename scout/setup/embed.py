@@ -1,6 +1,7 @@
 """Embed provider setup flow.
 
 Metadata: v0.1.0 | Scout Contributors | 2026-06-12
+Updated: 2026-06-14 — drop SetupBranch.openrouter; prompt provider type directly.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ from scout.setup.prompts import (
     prompt_local_provider,
     prompt_openrouter_api_key,
 )
-from scout.setup.prompts import SetupBranch
 
 
 @dataclass
@@ -39,18 +39,32 @@ class EmbedSetupResult:
     provider: EmbedProvider
 
 
+def _prompt_provider_name(config: ScoutConfig) -> str:
+    default = config.embed.provider or "lmstudio"
+    if default == "openrouter":
+        default_kind = "openrouter"
+    else:
+        default_kind = "local"
+    kind = typer.prompt(
+        "Embed provider type (local / openrouter)",
+        default=default_kind,
+    ).strip().lower()
+    if kind == "openrouter":
+        return "openrouter"
+    if kind == "local":
+        return prompt_local_provider()
+    console_print_red("invalid provider type — use local or openrouter")
+    raise SystemExit(1)
+
+
 async def configure_embed(
-    branch: SetupBranch,
     home,
     secrets: dict[str, str],
     config: ScoutConfig,
     console,
 ) -> EmbedSetupResult:
     """Run embed provider auth, model pick, and dimension probe."""
-    if branch.uses_openrouter:
-        provider_name = "openrouter"
-    else:
-        provider_name = prompt_local_provider()
+    provider_name = _prompt_provider_name(config)
 
     endpoint = ""
     if provider_name == "openrouter":

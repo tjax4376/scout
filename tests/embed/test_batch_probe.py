@@ -60,7 +60,7 @@ def test_batch_from_limits_embedding_uses_hardware_ceiling() -> None:
 def test_batch_from_limits_llm_uses_eval_batch() -> None:
     limits = ProviderModelLimits(eval_batch_size=4096, context_length=2048, is_embedding=False)
     batch = batch_from_limits(limits, probe_chars=3072, hardware_ceiling=10_000)
-    assert batch == 64  # 4096//768=5 → clamped to MIN_EMBED_BATCH 64
+    assert batch == 5  # 4096//768=5
 
 
 def test_batch_from_limits_chunk_too_large() -> None:

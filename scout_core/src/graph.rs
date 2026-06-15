@@ -6,14 +6,14 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
 
-use crate::chunk::{chunk_file, chunk_symbol};
 use crate::error::{ScoutError, ScoutResult};
+use crate::location_ref::compute_location_ref;
 use crate::node_id::compute_node_id;
 use crate::parse::extract_symbols;
 use crate::scan::resolve_path;
 use crate::types::ScannedFile;
 use crate::types::{
-    ChunkData, EdgeKind, GraphEdgeData, GraphNodeData, GraphSnapshot, NodeKind, SymbolInfo,
+    EdgeKind, GraphEdgeData, GraphNodeData, GraphSnapshot, NodeKind, SymbolInfo,
 };
 
 /// In-memory code graph with node lookup by id.
@@ -167,22 +167,30 @@ impl CodeGraph {
         }
         out
     }
+
+    /// Graph nodes whose rel_path starts with path_prefix, optionally filtered by kind.
+    pub fn list_symbols(
+        &self,
+        path_prefix: &str,
+        kinds: &[crate::types::NodeKind],
+    ) -> Vec<GraphNodeData> {
+        self.graph
+            .node_weights()
+            .filter(|n| !n.rel_path.is_empty() && n.rel_path.starts_with(path_prefix))
+            .filter(|n| kinds.is_empty() || kinds.contains(&n.kind))
+            .cloned()
+            .collect()
+    }
 }
 
-/// Build graph + chunks from scanned files.
-pub struct BuildOutput {
-    pub graph: CodeGraph,
-    pub chunks: Vec<ChunkData>,
-}
-
-pub fn build_graph_and_chunks(
+/// Build structure graph from scanned files (no chunk text).
+pub fn build_graph(
     space: &str,
     root: &Path,
     files: &[ScannedFile],
     index_version: &str,
-) -> ScoutResult<BuildOutput> {
+) -> ScoutResult<CodeGraph> {
     let mut graph = CodeGraph::new();
-    let mut chunks = Vec::new();
     let mut dir_nodes: HashMap<String, String> = HashMap::new();
 
     // Root directory node
@@ -194,6 +202,7 @@ pub fn build_graph_and_chunks(
         rel_path: String::new(),
         start_line: 0,
         end_line: 0,
+        location_ref: String::new(),
     });
     dir_nodes.insert(String::new(), root_id);
 
@@ -210,6 +219,7 @@ pub fn build_graph_and_chunks(
             rel_path: file.rel_path.clone(),
             start_line: 1,
             end_line: source.lines().count().max(1) as u32,
+            location_ref: compute_location_ref(&file.rel_path),
         });
 
         if let Some(parent_dir) = parent_dir_path(&file.rel_path) {
@@ -221,32 +231,36 @@ pub fn build_graph_and_chunks(
         }
 
         let symbols = extract_symbols(Path::new(&file.rel_path), &source).unwrap_or_default();
-        if symbols.is_empty() {
-            let file_chunks = chunk_file(space, &file.rel_path, &source);
-            for c in &file_chunks {
-                graph.add_node(GraphNodeData {
-                    node_id: c.node_id.clone(),
-                    kind: c.kind,
-                    symbol: c.symbol.clone(),
-                    rel_path: c.rel_path.clone(),
-                    start_line: c.start_line,
-                    end_line: c.end_line,
-                });
-                let _ = graph.add_edge(&file_id, &c.node_id, EdgeKind::Contains);
-            }
-            chunks.extend(file_chunks);
-        } else {
+        if !symbols.is_empty() {
             for sym in &symbols {
                 add_symbol_node(space, &mut graph, &file_id, &file.rel_path, sym);
-                let sym_chunks = chunk_symbol(space, &file.rel_path, &source, sym);
-                chunks.extend(sym_chunks);
             }
             resolve_static_edges(space, root, &mut graph, &file.rel_path, &source, &symbols)?;
         }
     }
 
     let _ = index_version; // version applied in snapshot on save
-    Ok(BuildOutput { graph, chunks })
+    Ok(graph)
+}
+
+/// Legacy alias kept for tests migrating off chunks.
+pub fn build_graph_and_chunks(
+    space: &str,
+    root: &Path,
+    files: &[ScannedFile],
+    index_version: &str,
+) -> ScoutResult<BuildOutput> {
+    let graph = build_graph(space, root, files, index_version)?;
+    Ok(BuildOutput {
+        graph,
+        chunks: Vec::new(),
+    })
+}
+
+/// Build graph output (chunks always empty in graph-only mode).
+pub struct BuildOutput {
+    pub graph: CodeGraph,
+    pub chunks: Vec<crate::types::ChunkData>,
 }
 
 fn parent_dir_path(rel_path: &str) -> Option<String> {
@@ -290,6 +304,7 @@ fn ensure_dir_chain(
             rel_path: accum.clone(),
             start_line: 0,
             end_line: 0,
+            location_ref: compute_location_ref(&accum),
         });
         let _ = graph.add_edge(&parent_id, &dir_id, EdgeKind::Contains);
         dir_nodes.insert(accum.clone(), dir_id.clone());
@@ -320,6 +335,7 @@ fn add_symbol_node(
         rel_path: rel_path.to_string(),
         start_line: sym.start_line,
         end_line: sym.end_line,
+        location_ref: compute_location_ref(rel_path),
     });
     let _ = graph.add_edge(file_id, &node_id, EdgeKind::Contains);
 }
@@ -520,4 +536,60 @@ pub fn load_graph(path: &Path) -> ScoutResult<CodeGraph> {
     let snapshot: GraphSnapshot = bincode::deserialize(&bytes)
         .map_err(|e| ScoutError::Other(format!("deserialize graph: {e}")))?;
     Ok(CodeGraph::load_from_snapshot(&snapshot))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{NodeKind, ScannedFile};
+
+    #[test]
+    fn build_graph_sets_location_ref() {
+        let dir = std::env::temp_dir().join(format!(
+            "scout-graph-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("README.md");
+        std::fs::write(&file_path, "# hello\n").unwrap();
+        let nested = dir.join("pkg").join("mod.py");
+        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        std::fs::write(&nested, "def f():\n    pass\n").unwrap();
+
+        let files = vec![
+            ScannedFile {
+                rel_path: "README.md".into(),
+                size: 8,
+                mtime_secs: 1,
+                language: None,
+                is_binary: false,
+            },
+            ScannedFile {
+                rel_path: "pkg/mod.py".into(),
+                size: 20,
+                mtime_secs: 1,
+                language: Some("python".into()),
+                is_binary: false,
+            },
+        ];
+        let output = build_graph_and_chunks("s", dir.as_path(), &files, "v1").unwrap();
+        assert!(output.chunks.is_empty());
+        let file_node = output
+            .graph
+            .get_node(&compute_node_id("s", "README.md", NodeKind::File, None, 1, 1))
+            .unwrap();
+        assert_eq!(file_node.location_ref, ".=/README.md");
+        let sym = output
+            .graph
+            .snapshot("v1")
+            .nodes
+            .into_iter()
+            .find(|n| n.symbol.as_deref() == Some("f"))
+            .unwrap();
+        assert_eq!(sym.location_ref, "pkg=/pkg/mod.py");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

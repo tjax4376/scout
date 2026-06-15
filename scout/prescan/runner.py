@@ -1,6 +1,7 @@
 """Prescan orchestration — metrics, capacity gate, confirmation.
 
-Metadata: v0.1.0 | Scout Contributors | 2026-06-12
+Metadata: v0.1.1 | Scout Contributors | 2026-06-14
+Change: gitignore-filtered metrics; optional file-cache RAM budget.
 """
 
 from __future__ import annotations
@@ -35,6 +36,9 @@ def run_prescan(
     root: Path,
     skip_globs: list[str] | None = None,
     skip_paths: list[str] | None = None,
+    *,
+    respect_gitignore: bool = True,
+    include_file_cache: bool = False,
 ) -> PrescanResult:
     """Walk workspace via scout_core and compute prescan metrics."""
     if scout_core is None:
@@ -43,12 +47,15 @@ def run_prescan(
         str(root),
         skip_globs=skip_globs or [],
         skip_paths=skip_paths or [],
+        respect_gitignore=respect_gitignore,
     )
     total_bytes = sum(f.size for f in files)
     langs = Counter((f.language or "other") for f in files)
     # Heuristic: index.db ~2x source size; RAM ~1.5x source for graph build.
     estimated_disk = int(total_bytes * 2.2)
     estimated_ram = int(total_bytes * 1.5) + (256 * 1024 * 1024)
+    if include_file_cache:
+        estimated_ram += total_bytes
     usage = shutil.disk_usage(root)
     available_disk = usage.free
     available_ram = _available_ram_bytes()

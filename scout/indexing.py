@@ -1,6 +1,7 @@
-"""Indexing orchestration — ties Rust core + embed providers.
+"""Indexing orchestration — graph-only rebuild via Rust core.
 
-Metadata: v0.1.0 | Scout Contributors | 2026-06-12
+Metadata: v0.1.0 | Scout Contributors | 2026-06-14
+Change: graph-only indexing; no sqlite chunks or embed pass.
 """
 
 from __future__ import annotations
@@ -17,25 +18,23 @@ from scout.config import (
     graph_bin_path,
     index_db_path,
     manifest_path,
-    save_config,
-    validate_embed,
+    space_scan_kwargs,
     validate_space,
 )
-from scout.embed.batch_probe import resolve_embed_batch_size
-from scout.embed.registry import EmbedProvider
 
-DEFAULT_EMBED_BATCH = 4096  # fallback when auto-probe unavailable
+INDEX_MODE = "graph-only"
+DEFAULT_EMBED_BATCH = 10
 
 
 async def embed_texts_batched(
-    provider: EmbedProvider,
+    provider,
     model: str,
     texts: list[str],
     *,
     batch_size: int = DEFAULT_EMBED_BATCH,
     console: Console | None = None,
 ) -> list[list[float]]:
-    """Embed texts in batches with progress bar."""
+    """Embed texts in batches (retained for embed batch probe tests / future embed-index)."""
     if not texts:
         return []
 
@@ -63,13 +62,10 @@ async def run_reindex(
     home: Path,
     space: str,
     config: ScoutConfig,
-    provider: EmbedProvider,
     *,
-    embed_batch_size: int = 0,
-    reprobe_embed_batch: bool = False,
     console: Console | None = None,
 ) -> str:
-    """Full synchronous rebuild. Raises on failure; no partial index."""
+    """Full synchronous graph rebuild. Raises on failure; no partial index."""
     if scout_core is None:
         raise RuntimeError("scout_core not built; run maturin develop")
 
@@ -80,15 +76,10 @@ async def run_reindex(
 
     try:
         entry = validate_space(home, space)
-        embed = validate_embed(config)
         root = Path(entry.root)
 
         ui.print("[cyan]Scanning workspace...[/cyan]")
-        files = scout_core.py_scan_workspace(
-            str(root),
-            skip_globs=entry.skip_globs,
-            skip_paths=entry.skip_paths,
-        )
+        files = scout_core.py_scan_workspace(str(root), **space_scan_kwargs(entry))
         ui.print(f"  {len(files)} files")
         files_json = json.dumps(
             [
@@ -103,73 +94,32 @@ async def run_reindex(
             ]
         )
 
-        ui.print("[cyan]Building graph and chunks...[/cyan]")
-        index_version = f"{embed.provider}:{embed.model}:{embed.dimensions}"
-        build_json = scout_core.py_build_index(space, str(root), files_json, index_version)
-        build_data = json.loads(build_json)
-        snapshot, chunks = build_data[0], build_data[1]
-        ui.print(f"  {len(snapshot.get('nodes', []))} graph nodes, {len(chunks)} chunks")
-
-        texts = [c["text"] for c in chunks]
-
-        if embed_batch_size > 0:
-            batch = embed_batch_size
-        else:
-            ui.print("[cyan]Resolving embed batch from provider /models...[/cyan]")
-            batch = await resolve_embed_batch_size(
-                provider,
-                embed.model,
-                embed.dimensions,
-                texts,
-                cli_override=0,
-                cached=embed.embed_batch_size,
-                reprobe=reprobe_embed_batch,
-            )
-            if embed.embed_batch_size != batch:
-                config.embed.embed_batch_size = batch
-                save_config(home, config)
-            ui.print(f"  embed batch: {batch}")
-
-        embeddings = await embed_texts_batched(
-            provider,
-            embed.model,
-            texts,
-            batch_size=batch,
-            console=ui,
+        ui.print("[cyan]Building graph...[/cyan]")
+        index_version = "graph-only:v1"
+        snapshot_json = scout_core.py_build_graph(
+            space, str(root), files_json, index_version
         )
-        embeddings_json = json.dumps(embeddings)
+        snapshot = json.loads(snapshot_json)
+        ui.print(f"  {len(snapshot.get('nodes', []))} graph nodes")
 
-        ui.print("[cyan]Writing vector index...[/cyan]")
-        db_tmp = index_db_path(home, space).with_suffix(".db.tmp")
+        ui.print("[cyan]Writing graph cache...[/cyan]")
         graph_tmp = graph_bin_path(home, space).with_suffix(".bin.tmp")
-
-        scout_core.py_write_index(
-            str(db_tmp),
-            embed.model,
-            embed.dimensions,
-            json.dumps(chunks),
-            embeddings_json,
-        )
-        scout_core.py_save_graph(str(graph_tmp), json.dumps(snapshot))
+        scout_core.py_save_graph(str(graph_tmp), snapshot_json)
 
         ui.print("[cyan]Finalizing index (atomic swap)...[/cyan]")
-        db_final = index_db_path(home, space)
         graph_final = graph_bin_path(home, space)
-        db_final.parent.mkdir(parents=True, exist_ok=True)
         graph_final.parent.mkdir(parents=True, exist_ok=True)
-        if db_final.exists():
-            db_final.unlink()
         if graph_final.exists():
             graph_final.unlink()
-        db_tmp.rename(db_final)
         graph_tmp.rename(graph_final)
 
-        version = scout_core.py_write_manifest(
+        db_final = index_db_path(home, space)
+        if db_final.exists():
+            db_final.unlink()
+
+        version = scout_core.py_write_graph_manifest(
             str(manifest_path(home, space)),
             files_json,
-            embed.provider,
-            embed.model,
-            embed.dimensions,
         )
         ui.print(f"[green]Index complete[/green] (version {version})")
         return version

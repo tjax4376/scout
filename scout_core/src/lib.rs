@@ -3,9 +3,12 @@
 //! Metadata: v0.1.0 | Scout Contributors | 2026-06-12
 //! Rationale: Rust owns CPU-bound indexing/search; Python shell calls via pyo3.
 
+pub mod bulk_read;
 pub mod chunk;
 pub mod error;
+pub mod file_read;
 pub mod graph;
+pub mod location_ref;
 pub mod index;
 pub mod node_id;
 pub mod parse;

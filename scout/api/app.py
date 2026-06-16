@@ -6,6 +6,8 @@ Metadata: v0.1.0 | Scout Contributors | 2026-06-14
 from __future__ import annotations
 
 import json
+import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -110,6 +112,45 @@ def _session_runtime(request: Request) -> SessionRuntime | None:
 
 def _embed_mode(request: Request) -> bool:
     return bool(getattr(request.app.state, "embed_mode", False))
+
+
+_HAWKEYE_TRACE = os.environ.get("HAWKEYE_TRACE", "").lower() in {"1", "true", "yes"}
+_HAWKEYE_LOG = logging.getLogger("scout.hawkeye.trace")
+
+
+if _HAWKEYE_TRACE:
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    class HawkeyeTraceMiddleware(BaseHTTPMiddleware):
+        """Optional server-side log when X-Hawkeye-Session-Id is present."""
+
+        async def dispatch(self, request: Request, call_next) -> Response:
+            response = await call_next(request)
+            session_id = request.headers.get("X-Hawkeye-Session-Id")
+            if not session_id:
+                return response
+            _HAWKEYE_LOG.info(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "method": request.method,
+                        "path": request.url.path,
+                        "query": dict(request.query_params),
+                        "status": response.status_code,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return response
+
+    def _hawkeye_middleware_registered() -> bool:
+        return any(
+            getattr(entry, "cls", None) is HawkeyeTraceMiddleware for entry in app.user_middleware
+        )
+
+    _HAWKEYE_LOG.info("Hawkeye trace middleware enabled")
+    if not _hawkeye_middleware_registered():
+        app.add_middleware(HawkeyeTraceMiddleware)
 
 
 def _legacy_index_available(home: Path, space: str) -> bool:

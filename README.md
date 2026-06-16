@@ -13,6 +13,7 @@ Optional: scout serve --embed → RAM cache + session_index.db → POST /search 
 |-------|------------|------|
 | Engine | Rust (`scout_core`) | Scan, parse, graph, vector index, search |
 | Shell | Python (`scout/`) | CLI, FastAPI, embed providers, session worker, skills |
+| Reviewer | Python (`scout/hawkeye/`) | **Hawkeye** — local graph-aware code review (rules, SARIF, trace) |
 | Storage | `.scout/` | Config, `graph.bin`, optional `session_index.db` per space |
 | Agents | Cursor / Pi / OpenCode skills | Graph map + search + code review |
 
@@ -24,9 +25,10 @@ Already on macOS or Linux with Python 3.11+ and Rust?
 
 ```bash
 git clone https://github.com/tjax4376/scout.git && cd scout
-scripts/scout.sh build dev              # clean, build, start serve (foreground)
+scripts/scout.sh build dev              # clean, build, verify scout+hawkeye, start serve
 # other terminal: source .venv/bin/activate
 curl -s http://127.0.0.1:8747/v1/health   # port from "Serving on …" line
+hawkeye setup --yes --space myapp         # after scout <space> setup indexed the repo
 ```
 
 Graph-only setup needs **no embed server**. For `scout serve --embed`, start LM Studio (or OpenRouter) first — see [Embed providers](#embed-providers).
@@ -45,6 +47,7 @@ First time? See [Prerequisites](#prerequisites), then pick your OS below.
 - [After install (all platforms)](#after-install-all-platforms)
 - [First-time setup (index a project)](#first-time-setup-index-a-project)
 - [Day-to-day workflow](#day-to-day-workflow)
+- [Hawkeye code review](#hawkeye-code-review)
 - [CLI reference](#cli-reference)
 - [REST API](#rest-api)
 - [Agent skills](#agent-skills)
@@ -236,6 +239,10 @@ curl -s "http://127.0.0.1:8741/v1/spaces/myapp/symbols?path_prefix=src/"
 curl -s -X POST http://127.0.0.1:8741/v1/spaces/myapp/search \
   -H "Content-Type: application/json" \
   -d '{"query": "authentication handler", "top_k": 5}'
+
+# Hawkeye CLIs (installed with scout package)
+hawkeye --help
+hawkeye setup --yes --space myapp    # discovers Scout on :8741-8799
 ```
 
 ---
@@ -355,6 +362,22 @@ sequenceDiagram
 
 ---
 
+## Hawkeye code review
+
+[Hawkeye](scout/hawkeye/README.md) is Scout's focused local code reviewer — rules + antipatterns YAML, graph trace, SARIF output. Requires `scout serve` running.
+
+```bash
+scout serve
+hawkeye setup                              # discovers Scout on :8741-8799
+hawkeye review --path src/auth/            # directory
+hawkeye review --file scout/api/app.py     # single file
+hawkeye review --diff origin/main          # git diff (default)
+```
+
+See [`scout/hawkeye/README.md`](scout/hawkeye/README.md) for setup discovery, exit codes, and hybrid escalation.
+
+---
+
 ## CLI reference
 
 **Command shape:** `<space>` first, then subcommand. The agent name is a **flag**, not a positional argument.
@@ -388,6 +411,29 @@ scout stop-serve
 | Auto embed batch (default) | `scout myapp reindex` |
 | Fixed embed batch size | `scout myapp reindex --embed-batch 512` |
 | Re-probe optimal batch | `scout myapp reindex --reprobe-embed-batch` |
+
+### Hawkeye (`hawkeye` command)
+
+Installed with the `scout` package. Requires `scout serve` and an indexed space.
+
+```
+hawkeye setup [--yes] [--space NAME] [--project]
+hawkeye review [--diff REF | --path DIR | --file PATH] [--backend auto|graph|filesystem] [--sarif PATH]
+hawkeye replay --session UUID [--dry-run]
+hawkeye export-sarif --session UUID --output PATH
+hawkeye mine [--threshold N]
+hawkeye promote --candidate-id ID --approve|--reject
+hawkeye feedback --session UUID --finding ID --verdict accepted|rejected
+```
+
+| Task | Command |
+|------|---------|
+| Auto-discover Scout + configure | `hawkeye setup` |
+| Review a directory | `hawkeye review --path src/auth/` |
+| Review one file | `hawkeye review --file scout/api/app.py` |
+| CI git diff review | `hawkeye review --diff origin/main --sarif out.sarif` |
+
+Full docs: [`scout/hawkeye/README.md`](scout/hawkeye/README.md).
 
 ### Common mistake
 
@@ -858,8 +904,15 @@ flowchart TB
 # Build + test
 scripts/scout.sh build dev
 source .venv/bin/activate
+scripts/scout.sh test              # full suite
+scripts/scout.sh test hawkeye      # Hawkeye only (faster)
+# or: make test / make test-hawkeye
 pytest -q
 cargo test -p scout_core
+
+# Verify wheel install (scout + hawkeye entry points)
+make verify-install
+# or: bash scripts/verify_pipx_install.sh
 
 # Validate OpenSpec artifacts (also runs in CI)
 scripts/scout.sh validate
@@ -870,14 +923,19 @@ scripts/scout.sh validate
 scripts/scout.sh start
 ```
 
+Dev build verifies **`scout`** and **`hawkeye`** console scripts plus packaged rule YAML (`scout/hawkeye/rules/pack_v1/`).
+
 ### Build script commands
 
 | Command | Action |
 |---------|--------|
-| `scripts/scout.sh build dev` | Clean, build, activate `.venv`, start `scout serve` (foreground) |
-| `scripts/scout.sh build production` | Release wheel → `.venv-prod` |
+| `scripts/scout.sh build dev` | Clean, build, verify CLIs, activate `.venv`, start `scout serve` (foreground) |
+| `scripts/scout.sh build production` | Release wheel → `.venv-prod`, verify CLIs |
 | `scripts/scout.sh start` | Serve only — skip build (dev venv) |
 | `scripts/scout.sh start production` | `scout serve` from prod venv |
+| `scripts/scout.sh test` | `pytest -q` (full suite) |
+| `scripts/scout.sh build hawkeye-binary` | PyInstaller → `dist/hawkeye` |
+| `scripts/scout.sh test hawkeye` | `pytest -q tests/hawkeye/` |
 | `scripts/scout.sh validate` | OpenSpec + API contract sync checks |
 
 ---
@@ -889,6 +947,7 @@ scripts/scout.sh start
 ```bash
 # After release is published
 pipx install scout
+# Installs both: scout, hawkeye
 ```
 
 > **Note:** PyPI package name `scout` may conflict with an older unrelated package (v4.x). For this project, prefer installing from a built wheel:
@@ -896,13 +955,28 @@ pipx install scout
 > ```bash
 > PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin build --release --out dist
 > pipx install dist/scout-0.1.0-*.whl
+> hawkeye --help
 > ```
 
-Verify pipx install:
+Verify pipx install (scout + hawkeye + rule pack):
 
 ```bash
 bash scripts/verify_pipx_install.sh
+# or: make verify-install
 ```
+
+### Standalone Hawkeye binary
+
+PyInstaller one-file executable — no Python venv required. Graph mode still needs `scout serve`; filesystem mode works offline.
+
+```bash
+scripts/scout.sh build hawkeye-binary
+# or: make build-hawkeye-binary
+./dist/hawkeye --help
+./dist/hawkeye review --backend filesystem --file path/to/file.py
+```
+
+CI builds `hawkeye-{ubuntu|macos}` artifacts on each push/PR. macOS Gatekeeper may require `xattr -d com.apple.quarantine dist/hawkeye`.
 
 ### Maintainer publish flow
 
@@ -920,6 +994,9 @@ scout/
   api/                   # FastAPI REST (/v1)
   cli/                   # CLI entry + errors.py (graceful exit)
   code_reviewer/         # code-reviewer-scout skill installer
+  hawkeye/               # Hawkeye local reviewer (rules, trace, SARIF)
+    cli/                 # hawkeye console entry
+    rules/pack_v1/       # Default rules + antipatterns YAML (packaged in wheel)
   config.py              # .scout/ config + secrets
   embed/                 # Provider registry, batch probe, chunk compression
   indexing.py            # Graph-only reindex orchestration
@@ -931,10 +1008,12 @@ scout/
 skills/
   search_scout/          # Agent search skill template
   code-reviewer-scout/   # Agent code-review skill template
-tests/                   # pytest (api, cli, embed, integration, openspec)
+tests/                   # pytest (api, cli, hawkeye, embed, integration, openspec)
 openspec/                # Change specs and tasks
 scripts/
-  scout.sh               # build / start / validate helper
+  scout.sh               # build / start / test / validate helper
+  hawkeye.sh             # run hawkeye without activating .venv
+  verify_pipx_install.sh # wheel smoke test (scout + hawkeye)
   validate_openspec.py   # Spec + API contract validator
 api-contracts.md         # Full REST API reference
 ```
@@ -950,7 +1029,7 @@ api-contracts.md         # Full REST API reference
 | [`openspec/changes/cli-graceful-errors/`](openspec/changes/cli-graceful-errors/) | CLI friendly errors + farewell message |
 | [`scope/scout-simple-mvp1.md`](scope/scout-simple-mvp1.md) | MVP1 requirements and architecture decisions |
 | [`scout_core/README.md`](scout_core/README.md) | Rust engine modules and build |
-| [`scout/api/README.md`](scout/api/README.md) | FastAPI app notes |
+| [`scout/hawkeye/README.md`](scout/hawkeye/README.md) | Hawkeye local code reviewer — setup, rules, path review |
 | [`.memory/cards.md`](.memory/cards.md) | Ops runbook — common issues and fixes |
 
 ---
@@ -967,6 +1046,7 @@ api-contracts.md         # Full REST API reference
 | `not enough capacity` on `--embed` | RAM warm exceeds prescan gate | `scout serve --embed --no-warm-cache` or narrow space root |
 | Agent hits wrong API | Stale skill install | Reinstall with `--force` and current `--scout-api` |
 | `scout_core not built` | Rust extension missing | `scripts/scout.sh build dev` |
+| `hawkeye: command not found` | Dev venv not active / package not installed | `source .venv/bin/activate` or `scripts/hawkeye.sh --help`; rebuild with `scripts/scout.sh build dev` |
 | `stale: true` | Files changed on disk | `scout <space> reindex` |
 
 ---

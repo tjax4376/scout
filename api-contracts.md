@@ -712,6 +712,24 @@ curl -s "{BASE}/spaces/myapp/graph/file?rel_path=src/auth.py"
 
 ---
 
+## Hawkeye review tracing (optional)
+
+[Hawkeye](scout/hawkeye/README.md) sends optional request headers when running local code review:
+
+| Header | Description |
+|--------|-------------|
+| `X-Hawkeye-Session-Id` | UUID correlating Scout calls with a Hawkeye review session |
+
+Example:
+
+```http
+X-Hawkeye-Session-Id: 123e4567-e89b-12d3-a456-426614174000
+```
+
+When `HAWKEYE_TRACE=1` is set on `scout serve`, the API logs method, path, session id, and status for requests carrying `X-Hawkeye-Session-Id`. Response bodies and routes are unchanged.
+
+---
+
 ## Reference
 
 ### Node kinds

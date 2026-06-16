@@ -1,0 +1,135 @@
+# Hawkeye v1 Rule Pack — auth & API patterns
+# Installed by `hawkeye setup`; override via ~/.hawkeye/rules.yaml or --rules at review start.
+# Metadata: v1.0.0 | Scout Contributors | 2026-06-15
+
+rules:
+  # --- AUTH (HKY-AUTH-001 – HKY-AUTH-005) ---
+
+  - id: HKY-AUTH-001
+    name: Auth symbol changed without neighbor trace
+    description: >
+      Changed function/method under auth paths must have neighbor expansion
+      recorded in trace before findings are emitted (playbook compliance).
+    type: symbol_diff_overlap
+    enabled: true
+    severity: warning
+    path_glob: "**/auth/**"
+    kinds: [function, method]
+    require_neighbors_logged: true
+    message: "Auth symbol changed but neighbor trace missing — expand callers before approving."
+
+  - id: HKY-AUTH-002
+    name: Token/crypto path edited — verify callers
+    description: >
+      Symbols matching token|jwt|session|password in auth paths with changed
+      lines must have at least one incoming Calls edge documented.
+    type: graph_neighbor
+    enabled: true
+    severity: warning
+    path_glob: "**/auth/**"
+    symbol_regex: "(?i)(token|jwt|session|password|authenticate|authorize)"
+    kinds: [function, method]
+    edge: Calls
+    direction: incoming
+    min_count: 1
+    message: "Auth/crypto symbol changed with no recorded callers — verify blast radius."
+
+  - id: HKY-AUTH-003
+    name: New auth export lacks test caller
+    description: >
+      New or changed public auth API symbols should have incoming Calls from tests/**.
+    type: graph_neighbor
+    enabled: true
+    severity: warning
+    path_glob: "**/auth/**"
+    kinds: [function, method]
+    edge: Calls
+    direction: incoming
+    from_path_glob: "tests/**"
+    min_count: 1
+    on: changed_symbol
+    message: "Auth symbol changed/added with no test caller edge in graph."
+
+  - id: HKY-AUTH-004
+    name: Hardcoded secret anti-pattern in auth paths
+    description: Delegates to anti-pattern AP-HARDCODED-SECRET for auth-scoped files.
+    type: anti_pattern_ref
+    enabled: true
+    severity: error
+    anti_pattern_id: AP-HARDCODED-SECRET
+    path_glob: "**/auth/**"
+    message: "Potential hardcoded credential in auth path."
+
+  - id: HKY-AUTH-005
+    name: Stale index blocks security review pass
+    description: >
+      When reviewing auth-scoped changes, stale Scout index must not allow silent pass.
+    type: staleness_gate
+    enabled: true
+    severity: error
+    path_glob: "**/auth/**"
+    on_stale: fail
+    message: "Scout index stale during auth-scoped review — reindex before merge."
+
+  # --- API (HKY-API-001 – HKY-API-005) ---
+
+  - id: HKY-API-001
+    name: API route handler changed — map symbols first
+    description: Changed files under api/routes paths must overlap indexed symbols.
+    type: symbol_diff_overlap
+    enabled: true
+    severity: warning
+    path_glob: "**/api/**"
+    kinds: [function, method]
+    require_symbol_overlap: true
+    message: "API file changed but diff lines do not overlap any indexed symbol — index lag or parse gap."
+
+  - id: HKY-API-002
+    name: API layer imports DB internals
+    description: Delegates to anti-pattern AP-IMPORT-DB-INTERNAL.
+    type: anti_pattern_ref
+    enabled: true
+    severity: error
+    anti_pattern_id: AP-IMPORT-DB-INTERNAL
+    message: "API layer must not import DB internals."
+
+  - id: HKY-API-003
+    name: Public API symbol missing test caller
+    description: >
+      Changed symbols in api paths with decorator/route naming should have test caller.
+    type: graph_neighbor
+    enabled: true
+    severity: warning
+    path_glob: "**/api/**"
+    kinds: [function, method]
+    edge: Calls
+    direction: incoming
+    from_path_glob: "tests/**"
+    min_count: 1
+    on: changed_symbol
+    message: "API handler changed with no incoming test Calls edge."
+
+  - id: HKY-API-004
+    name: New cross-package import edge
+    description: >
+      New Imports edge from api/** to non-api, non-tests package requires review.
+    type: graph_neighbor
+    enabled: true
+    severity: warning
+    path_glob: "**/api/**"
+    edge: Imports
+    direction: outgoing
+    to_path_glob_excluded: ["**/api/**", "tests/**", "**/types/**"]
+    on: new_edge_in_diff
+    message: "New cross-layer import from API — confirm architectural intent."
+
+  - id: HKY-API-005
+    name: Raw SQL string in API handler
+    description: Detect raw SQL in API handler bodies (injection risk indicator).
+    type: text_hunk
+    enabled: true
+    severity: warning
+    path_glob: "**/api/**"
+    kinds: [function, method]
+    pattern: "(?i)(execute\\s*\\(|raw\\s*sql|f\"SELECT|f'SELECT)"
+    message: "Possible raw SQL in API handler — prefer parameterized queries/repository layer."

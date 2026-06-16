@@ -1,0 +1,74 @@
+# Hawkeye v1 Anti-Pattern Registry
+# Metadata: v1.0.0 | Scout Contributors | 2026-06-15
+
+antipatterns:
+  - id: AP-IMPORT-DB-INTERNAL
+    description: API layer must not import database internal modules
+    type: import_edge
+    severity: error
+    from_path_glob: "**/api/**"
+    to_path_glob: "**/db/internal/**"
+    message: "Forbidden import: API → db/internal"
+
+  - id: AP-HARDCODED-SECRET
+    description: Hardcoded password, secret, or API key assignment in source
+    type: text_regex
+    severity: error
+    path_glob: "**/auth/**"
+    pattern: |
+      (?i)(password|secret|api_key|apikey|token)\s*=\s*["'][^"']{8,}["']
+    message: "Possible hardcoded secret — use environment or secret store"
+
+  - id: AP-AUTH-BYPASS-COMMENT
+    description: Suspicious auth bypass markers in code comments
+    type: text_regex
+    severity: warning
+    path_glob: "**/auth/**"
+    pattern: |
+      (?i)(skip\s+auth|disable\s+auth|noauth|bypass\s+auth|TODO.*auth)
+    message: "Comment suggests auth bypass — verify intent"
+
+  - id: AP-DIRECT-ORM-IN-ROUTE
+    description: Route handlers should not instantiate ORM/session directly
+    type: text_regex
+    severity: warning
+    path_glob: "**/api/**"
+    pattern: |
+      (?i)(SessionLocal\(\)|create_engine\(|sqlite3\.connect\()
+    message: "Direct DB session/engine in API route — use dependency injection"
+
+  - id: AP-UNVALIDATED-REQUEST-BODY
+    description: FastAPI/Flask route accepting dict/Any without schema nearby
+    type: text_regex
+    severity: note
+    path_glob: "**/api/**"
+    pattern: |
+      (?i)(def\s+\w+\([^)]*(?:body|data)\s*:\s*(?:dict|Any)\b)
+    message: "Route may accept unvalidated body type — confirm Pydantic/schema used"
+
+  - id: AP-CORS-WILDCARD
+    description: Permissive CORS wildcard origin
+    type: text_regex
+    severity: warning
+    path_glob: "**/api/**"
+    pattern: |
+      (?i)(allow_origins\s*=\s*\[\s*["']\*["']|Access-Control-Allow-Origin.*\*)
+    message: "Permissive CORS wildcard — restrict origins in production"
+
+  - id: AP-DEBUG-TRUE-IN-API
+    description: Debug mode enabled in API config
+    type: text_regex
+    severity: error
+    path_glob: "**/api/**"
+    pattern: |
+      (?i)(DEBUG\s*=\s*True|debug\s*=\s*true)
+    message: "Debug flag in API code path — must not ship to production"
+
+  - id: AP-MISSING-HTTP-ONLY-COOKIE
+    description: Session cookie set without httponly flag (heuristic)
+    type: text_regex
+    severity: warning
+    path_glob: "**/auth/**"
+    pattern: |
+      (?i)set_cookie\([^)]*(?!httponly)[^)]*\)
+    message: "Cookie may lack httponly — review session cookie flags"

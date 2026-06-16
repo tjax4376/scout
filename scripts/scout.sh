@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Scout build & run helper.
 #
-# Metadata: v0.1.1 | Scout Contributors | 2026-06-14
-# Rationale: one entrypoint for dev + production binary build and API start.
+# Metadata: v0.1.2 | Scout Contributors | 2026-06-15
+# Rationale: one entrypoint for dev + production binary build, API start, Hawkeye verify.
 # Usage:
 #   scripts/scout.sh build dev          # clean, build, activate .venv, start scout serve
 #   scripts/scout.sh build production   # release wheel → .venv-prod
 #   scripts/scout.sh start              # scout serve only (skip build)
 #   scripts/scout.sh start production   # scout serve from production install
+#   scripts/scout.sh test               # pytest (all tests)
+#   scripts/scout.sh test hawkeye       # pytest tests/hawkeye only
 #   scripts/scout.sh validate           # OpenSpec structure + link checks
 
 set -euo pipefail
@@ -28,6 +30,8 @@ Usage:
   $(basename "$0") build production
   $(basename "$0") start              # serve only (skip build)
   $(basename "$0") start production
+  $(basename "$0") build hawkeye-binary # PyInstaller → dist/hawkeye
+  $(basename "$0") test [hawkeye]     # pytest (all, or tests/hawkeye only)
   $(basename "$0") validate
 EOF
   exit 1
@@ -96,6 +100,11 @@ clean_for_dev_build() {
   clean_stale_venv_packages
 }
 
+build_hawkeye_binary() {
+  cd "$ROOT"
+  exec "$ROOT/scripts/build_hawkeye_binary.sh"
+}
+
 build_dev() {
   cd "$ROOT"
   clean_for_dev_build
@@ -105,6 +114,7 @@ build_dev() {
   maturin develop --release
   echo "Verifying scout_core..."
   python -c "import scout_core; print('scout_core', scout_core.py_core_version())"
+  verify_clis
   echo "OK: clean dev build verified"
   start_dev_serve
 }
@@ -114,6 +124,23 @@ ensure_scout_core() {
     echo "scout_core not built. Run: scripts/$(basename "$0") build dev" >&2
     exit 1
   fi
+}
+
+verify_clis() {
+  echo "Verifying scout CLI..."
+  scout --help >/dev/null
+  echo "Verifying hawkeye CLI..."
+  hawkeye --help >/dev/null
+  echo "Verifying hawkeye rule pack..."
+  python -c "
+from scout.hawkeye.config import _read_pack_yaml
+pack = _read_pack_yaml('rules.yaml')
+rules = pack.get('rules') or []
+if not rules:
+    raise SystemExit('hawkeye rules pack empty')
+print(f'hawkeye pack OK ({len(rules)} rules)')
+"
+  echo "OK: scout + hawkeye CLIs verified"
 }
 
 start_dev_serve() {
@@ -143,6 +170,7 @@ build_production() {
   pip install -q --force-reinstall "$WHEEL"
   echo "Verifying scout_core..."
   python -c "import scout_core; print('scout_core', scout_core.py_core_version())"
+  verify_clis
   echo "OK: production build ready — run: scripts/$(basename "$0") start production"
 }
 
@@ -166,6 +194,18 @@ validate_openspec() {
   exec "$PYTHON" scripts/validate_openspec.py
 }
 
+run_tests() {
+  cd "$ROOT"
+  activate_venv
+  ensure_scout_core
+  if [[ "${1:-}" == "hawkeye" ]]; then
+    echo "Running Hawkeye tests..."
+    exec pytest -q tests/hawkeye/
+  fi
+  echo "Running full test suite..."
+  exec pytest -q "${@}"
+}
+
 is_prod_target() {
   case "${1:-}" in
     production | prod) return 0 ;;
@@ -178,6 +218,7 @@ case "${1:-}" in
     case "${2:-}" in
       dev) build_dev ;;
       production | prod) build_production ;;
+      hawkeye-binary) build_hawkeye_binary ;;
       *) usage ;;
     esac
     ;;
@@ -191,5 +232,9 @@ case "${1:-}" in
     fi
     ;;
   validate) validate_openspec ;;
+  test)
+    shift
+    run_tests "$@"
+    ;;
   *) usage ;;
 esac

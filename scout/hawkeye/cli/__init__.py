@@ -1,0 +1,1 @@
+"""Hawkeye CLI package."""

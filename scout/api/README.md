@@ -18,6 +18,16 @@ FastAPI REST layer for agent-facing code search. Started by `scout serve`.
 
 Full request/response shapes: [`api-contracts.md`](../../api-contracts.md) at repo root.
 
+## Hawkeye trace headers (optional)
+
+When [Hawkeye](../hawkeye/README.md) runs reviews it sends:
+
+| Header | Purpose |
+|--------|---------|
+| `X-Hawkeye-Session-Id` | Correlate Scout calls with a review session UUID |
+
+Enable server-side request logging with `HAWKEYE_TRACE=1` (logs method, path, session id, status). Response bodies unchanged.
+
 Route changes must update **api-contracts.md**, **rest-api/spec.md**, and **app.py** together (`scripts/scout.sh validate` enforces sync).
 
 ## Dependencies

@@ -34,8 +34,49 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
+      - name: Verify CLIs and Hawkeye pack
+        run: |
+          scout --help >/dev/null
+          hawkeye --help >/dev/null
+          python -c "from scout.hawkeye.config import _read_pack_yaml; r=_read_pack_yaml('rules.yaml').get('rules') or []; assert r, 'empty hawkeye pack'"
+
       - name: Run tests
         run: pytest -q
+
+  hawkeye-binary:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build hawkeye binary
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -q -U pip pyinstaller httpx pyyaml
+          pip install -q -e .
+          pyinstaller packaging/hawkeye.spec --clean --noconfirm
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          BIN="dist/hawkeye"
+          [[ -x "$BIN" ]] || BIN="dist/hawkeye.exe"
+          "$BIN" --help >/dev/null
+          WORK=$(mktemp -d)
+          echo 'x = 1' > "$WORK/main.py"
+          "$BIN" review --backend filesystem --file "$WORK/main.py" --project-root "$WORK" >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hawkeye-${{ matrix.os }}
+          path: dist/hawkeye*
 
   wheels:
     strategy:

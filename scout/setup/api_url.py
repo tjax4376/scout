@@ -13,7 +13,12 @@ from urllib.parse import urlparse
 
 import httpx
 
-from scout.config import DEFAULT_API_PORT_START, ScoutConfig
+from scout.config import (
+    DEFAULT_API_PORT_START,
+    ScoutConfig,
+    default_api_base_url,
+    is_loopback_host,
+)
 
 DEFAULT_API_BASE_URL = f"http://127.0.0.1:{DEFAULT_API_PORT_START}/v1"
 API_PORT_RANGE_END = 8799
@@ -39,7 +44,10 @@ def normalize_api_base_url(raw: str) -> str:
     path = parsed.path.rstrip("/") or ""
     if path != "/v1":
         raise ValueError("API URL path must be /v1")
-    return f"{parsed.scheme}://{parsed.hostname}:{parsed.port}/v1"
+    scheme = parsed.scheme
+    if scheme == "http" and not is_loopback_host(parsed.hostname):
+        scheme = "https"
+    return f"{scheme}://{parsed.hostname}:{parsed.port}/v1"
 
 
 def parse_api_base_url(url: str) -> ApiEndpoint:
@@ -59,13 +67,13 @@ def build_scout_api_url(config: ScoutConfig) -> str:
     """Return canonical Scout API base URL from config."""
     if config.api_base_url:
         return normalize_api_base_url(config.api_base_url)
-    return f"http://127.0.0.1:{config.api_port}/v1"
+    return default_api_base_url(config.api_port)
 
 
 def migrate_api_base_url(config: ScoutConfig) -> None:
     """Ensure api_base_url is set; derive from api_port if missing."""
     if not config.api_base_url:
-        config.api_base_url = f"http://127.0.0.1:{config.api_port}/v1"
+        config.api_base_url = default_api_base_url(config.api_port)
 
 
 def update_api_base_url_port(config: ScoutConfig, port: int) -> None:

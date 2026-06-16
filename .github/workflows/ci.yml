@@ -43,6 +43,36 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  # Fail on CRITICAL/HIGH Python dependency CVEs (pip-audit advisory DB).
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project and pip-audit
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -q -U pip pip-audit
+          pip install -q -e .
+
+      - name: pip-audit (fail on high/critical)
+        run: |
+          source .venv/bin/activate
+          pip-audit --desc on --fail-on-severity high
+
+      - name: npm audit when package-lock.json exists
+        run: |
+          if [ -f package-lock.json ]; then
+            npm audit --audit-level=high
+          else
+            echo "No package-lock.json — skipping npm audit"
+          fi
+
   hawkeye-binary:
     strategy:
       matrix:

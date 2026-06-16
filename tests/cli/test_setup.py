@@ -108,7 +108,7 @@ async def test_run_setup_uses_selected_src_root(
 
 def test_normalize_api_base_url() -> None:
     assert normalize_api_base_url("http://127.0.0.1:8741/v1") == "http://127.0.0.1:8741/v1"
-    assert normalize_api_base_url("http://10.0.0.5:9000/v1/") == "http://10.0.0.5:9000/v1"
+    assert normalize_api_base_url("http://10.0.0.5:9000/v1/") == "https://10.0.0.5:9000/v1"
 
 
 def test_normalize_api_base_url_rejects_invalid() -> None:
@@ -124,12 +124,12 @@ def test_parse_api_base_url() -> None:
     ep = parse_api_base_url("http://192.168.1.10:8741/v1")
     assert ep.host == "192.168.1.10"
     assert ep.port == 8741
-    assert ep.scheme == "http"
+    assert ep.scheme == "https"
 
 
 def test_build_scout_api_url_from_config() -> None:
     config = ScoutConfig(api_base_url="http://10.0.0.5:9000/v1", api_port=9000)
-    assert build_scout_api_url(config) == "http://10.0.0.5:9000/v1"
+    assert build_scout_api_url(config) == "https://10.0.0.5:9000/v1"
 
 
 def test_config_migration_api_port_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,7 +145,7 @@ def test_update_api_base_url_port() -> None:
     config = ScoutConfig(api_base_url="http://10.0.0.5:8741/v1", api_port=8741)
     update_api_base_url_port(config, 8745)
     assert config.api_port == 8745
-    assert config.api_base_url == "http://10.0.0.5:8745/v1"
+    assert config.api_base_url == "https://10.0.0.5:8745/v1"
 
 
 def test_setup_branch_flags() -> None:

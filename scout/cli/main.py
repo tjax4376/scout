@@ -149,8 +149,18 @@ def _main_impl(argv: list[str] | None = None) -> None:
         try:
             mode_label = " (embed)" if embed_mode else ""
             console.print(f"[green]Serving{mode_label} on {api_url}[/green]")
-            graph_url = api_url.removesuffix("/v1") + "/graph"
+            graph_url = api_url.removesuffix("/v1")
+            if config.api.force_https:
+                graph_url = graph_url.replace("http://", "https://", 1)
+            graph_url = graph_url + "/graph"
             console.print(f"[green]Graph UI: {graph_url}[/green]")
+            if config.api.auth.enabled:
+                console.print(
+                    "[yellow]API auth enabled — send Authorization: Bearer "
+                    "(SCOUT_API_KEY / SCOUT_ADMIN_KEY)[/yellow]"
+                )
+            if config.api.force_https:
+                console.print("[yellow]HTTPS redirect enabled[/yellow]")
             uvicorn.run(
                 create_app(embed_mode=embed_mode, warm_cache=warm_cache),
                 host=endpoint.host,

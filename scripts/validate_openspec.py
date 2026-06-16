@@ -52,9 +52,9 @@ EXPOSE_ENDPOINT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# FastAPI route decorators on app: @app.get("/v1/health")
+# FastAPI route decorators: @app.get(...) or @v1_router.get(...)
 APP_ROUTE_RE = re.compile(
-    r'@app\.(get|post|put|delete|patch)\(\s*["\']([^"\']+)["\']',
+    r'@(?:app|v1_router)\.(get|post|put|delete|patch)\(\s*["\']([^"\']+)["\']',
     re.IGNORECASE,
 )
 

@@ -41,3 +41,46 @@
 **Symptom:** `stale: true` in review.
 
 **Fix:** `scout <space> reindex`.
+
+## Scout API auth (security-hardening)
+
+**Symptom:** `401 unauthorized` from Scout after upgrade.
+
+**Fix:** Send `Authorization: Bearer $SCOUT_API_KEY`. Admin routes (`reindex`, `DELETE session/index`) need `SCOUT_ADMIN_KEY`. Localhost dev: `api.auth.enabled: false` in `config.yaml` or unset `SCOUT_AUTH_ENABLED`. Setup generates keys in `api.auth` block.
+
+## Scout API auth (security-hardening)
+
+**Symptom:** `401 unauthorized` from Scout after upgrade.
+
+**Fix:** Send `Authorization: Bearer $SCOUT_API_KEY`. Admin routes (`reindex`, `DELETE session/index`) need `SCOUT_ADMIN_KEY`. Localhost dev: `api.auth.enabled: false` in `config.yaml` or unset `SCOUT_AUTH_ENABLED`. Setup generates keys in `api.auth` block.
+
+## Scout API HTTPS redirect loop
+
+**Symptom:** `301` redirect loop or clients cannot reach `/v1/health` after enabling HTTPS.
+
+**Fix:** Terminate TLS at reverse proxy and forward `X-Forwarded-Proto: https`. For local dev keep loopback `http://127.0.0.1:PORT/v1` with `api.force_https: false`. LAN deploys: use `https://` in `api_base_url` or set `SCOUT_FORCE_HTTPS=1`.
+
+## Scout API rate limit 429
+
+**Symptom:** `429 rate limit exceeded` on search/reindex despite low traffic.
+
+**Fix:** Limits are per IP **and** bearer token. Shared NAT users need distinct keys. Tune `api.rate_limit.search_per_minute` / `reindex_per_hour` in config.
+
+## Scout API path traversal 400
+
+**Symptom:** `400` on `GET /v1/spaces/{space}/file?rel_path=...`
+
+**Fix:** `rel_path` must be workspace-relative (no `..`, no absolute paths). URL-encoded traversal (`%2e%2e`) is rejected. Use paths like `src/main.py`.
+
+## OpenSpec route validator vs APIRouter
+
+**Symptom:** `validate_openspec.py` fails — routes in `app.py` not found after moving to `@v1_router`.
+
+**Fix:** Use full `/v1/...` paths on `@v1_router` decorators; extend `APP_ROUTE_RE` to match `@v1_router` as well as `@app`.
+
+
+**Symptom:** AI/subagent review cites files that don't exist in target repo (e.g. `api/controllers/user.js`, `business-rules.js`, `utils/validation.js`) or misattributes line ranges (e.g. `auth.js:120-150` described as nested RBAC but actual lines are UI form logic).
+
+**Cause:** Hybrid escalation bundle sent to external AI; model invents generic e-commerce patterns not grounded in indexed/diff scope.
+
+**Fix:** Verify every cited path exists before acting. Re-run with `hawkeye review --path <dir> --backend filesystem` and confirm file list. Prefer deterministic rule findings over hybrid advisory. If implementing fixes, confirm target repo path and open workspace to that project.

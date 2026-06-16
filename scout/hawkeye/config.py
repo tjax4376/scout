@@ -6,6 +6,7 @@ Change rationale: PyInstaller frozen pack path, filesystem defaults without conf
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,7 @@ class HawkeyeConfig:
     default_space: str
     config_dir: Path
     trace_dir: Path
+    scout_api_token: str = ""
     rules: list[dict[str, Any]] = field(default_factory=list)
     antipatterns: list[dict[str, Any]] = field(default_factory=list)
 
@@ -236,11 +238,15 @@ def load_config(
     rules_paths = [cfg_dir / "rules.yaml", rules_file]
     antipaths = [cfg_dir / "antipatterns.yaml", antipatterns_file]
     trace_dir = Path(str(main.get("trace_dir") or (cfg_dir / "traces")))
+    token = str(main.get("scout_api_token") or "")
+    if os.environ.get("SCOUT_API_KEY"):
+        token = os.environ["SCOUT_API_KEY"]
     return HawkeyeConfig(
         scout_api=str(main["scout_api"]).rstrip("/"),
         default_space=str(main["default_space"]),
         config_dir=cfg_dir,
         trace_dir=trace_dir,
+        scout_api_token=token,
         rules=load_rules_from_paths(*rules_paths),
         antipatterns=load_antipatterns_from_paths(*antipaths),
     )

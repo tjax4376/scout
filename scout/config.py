@@ -5,12 +5,35 @@ Metadata: v0.1.0 | Scout Contributors | 2026-06-12
 
 from __future__ import annotations
 
+import logging
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
+
+_LOG = logging.getLogger("scout.config")
+
+_LOCALHOST_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def is_loopback_host(hostname: str | None) -> bool:
+    """Return True when hostname is a local-only bind address."""
+    return (hostname or "127.0.0.1").lower() in _LOCALHOST_HOSTS
+
+
+def default_api_scheme(host: str) -> str:
+    """Loopback uses HTTP for local dev; other hosts default to HTTPS."""
+    return "http" if is_loopback_host(host) else "https"
+
+
+def default_api_base_url(port: int, host: str = "127.0.0.1") -> str:
+    """Build default api_base_url from port and bind host."""
+    scheme = default_api_scheme(host)
+    return f"{scheme}://{host}:{port}/v1"
 
 SCOUT_DIR_NAME = ".scout"
 DEFAULT_API_PORT_START = 8741
@@ -46,11 +69,39 @@ def space_scan_kwargs(entry: SpaceEntry) -> dict[str, object]:
 
 
 @dataclass
+class AuthConfig:
+    enabled: bool = False
+    key: str = ""
+    admin_key: str = ""
+    health_public: bool = True
+
+
+@dataclass
+class RateLimitConfig:
+    search_per_minute: int = 60
+    reindex_per_hour: int = 3
+
+
+@dataclass
+class ApiConfig:
+    auth: AuthConfig = field(default_factory=AuthConfig)
+    cors_origins: list[str] = field(
+        default_factory=lambda: [
+            "http://127.0.0.1:3000",
+            "http://localhost:3000",
+        ]
+    )
+    force_https: bool = False
+    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+
+
+@dataclass
 class ScoutConfig:
     api_port: int = DEFAULT_API_PORT_START
     api_base_url: str = ""
     spaces: dict[str, SpaceEntry] = field(default_factory=dict)
     embed: EmbedConfig = field(default_factory=EmbedConfig)
+    api: ApiConfig = field(default_factory=ApiConfig)
 
 
 def scout_home(cwd: Path | None = None) -> Path:
@@ -120,6 +171,93 @@ def graph_bin_path(home: Path, space: str) -> Path:
     return home / "cache" / space / "graph.bin"
 
 
+def _parse_auth_config(raw: dict[str, Any]) -> AuthConfig:
+    return AuthConfig(
+        enabled=bool(raw.get("enabled", False)),
+        key=str(raw.get("key", "") or ""),
+        admin_key=str(raw.get("admin_key", "") or ""),
+        health_public=bool(raw.get("health_public", True)),
+    )
+
+
+def _parse_api_config(data: dict[str, Any]) -> ApiConfig:
+    api_raw = data.get("api", {}) or {}
+    auth_raw = api_raw.get("auth", {}) or {}
+    rate_raw = api_raw.get("rate_limit", {}) or {}
+    cors = api_raw.get("cors_origins")
+    origins = list(cors) if isinstance(cors, list) else None
+    return ApiConfig(
+        auth=_parse_auth_config(auth_raw),
+        cors_origins=origins
+        if origins is not None
+        else ApiConfig().cors_origins,
+        force_https=bool(api_raw.get("force_https", False)),
+        rate_limit=RateLimitConfig(
+            search_per_minute=int(rate_raw.get("search_per_minute", 60) or 60),
+            reindex_per_hour=int(rate_raw.get("reindex_per_hour", 3) or 3),
+        ),
+    )
+
+
+def _apply_api_env_overrides(api: ApiConfig) -> ApiConfig:
+    if os.environ.get("SCOUT_API_KEY"):
+        api.auth.key = os.environ["SCOUT_API_KEY"]
+    if os.environ.get("SCOUT_ADMIN_KEY"):
+        api.auth.admin_key = os.environ["SCOUT_ADMIN_KEY"]
+    if os.environ.get("SCOUT_FORCE_HTTPS", "").lower() in {"1", "true", "yes"}:
+        api.force_https = True
+    cors_env = os.environ.get("SCOUT_CORS_ORIGINS", "").strip()
+    if cors_env:
+        api.cors_origins = [part.strip() for part in cors_env.split(",") if part.strip()]
+    if os.environ.get("SCOUT_AUTH_ENABLED", "").lower() in {"1", "true", "yes"}:
+        api.auth.enabled = True
+    if os.environ.get("SCOUT_AUTH_ENABLED", "").lower() in {"0", "false", "no"}:
+        api.auth.enabled = False
+    return api
+
+
+def _default_auth_for_bind(api_base_url: str, auth: AuthConfig) -> AuthConfig:
+    """Enable auth by default when binding beyond loopback unless explicitly configured."""
+    if auth.enabled or auth.key or auth.admin_key:
+        return auth
+    parsed = urlparse(api_base_url)
+    if not is_loopback_host(parsed.hostname):
+        auth.enabled = True
+    return auth
+
+
+def _upgrade_api_base_url_scheme(api_base_url: str) -> str:
+    """Use HTTPS scheme for non-loopback hosts (cleartext LAN binds are upgraded)."""
+    parsed = urlparse(api_base_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port
+    if port is None:
+        return api_base_url
+    if parsed.scheme == "http" and not is_loopback_host(host):
+        return f"https://{host}:{port}/v1"
+    return api_base_url
+
+
+def _apply_force_https_policy(api: ApiConfig, api_base_url: str) -> None:
+    """Enable HTTPS redirect when URL or bind host requires transport security."""
+    parsed = urlparse(api_base_url)
+    if parsed.scheme == "https" or not is_loopback_host(parsed.hostname):
+        api.force_https = True
+
+
+def warn_insecure_secrets_file(home: Path) -> None:
+    """Warn when secrets.yaml is world-readable on Unix."""
+    path = secrets_path(home)
+    if not path.exists():
+        return
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        return
+    if mode & (stat.S_IRGRP | stat.S_IROTH):
+        _LOG.warning("secrets.yaml is world-readable; run chmod 600 %s", path)
+
+
 def load_config(home: Path) -> ScoutConfig:
     path = config_path(home)
     if not path.exists():
@@ -153,12 +291,18 @@ def load_config(home: Path) -> ScoutConfig:
     api_port = int(data.get("api_port", DEFAULT_API_PORT_START))
     api_base_url = str(data.get("api_base_url", "") or "")
     if not api_base_url:
-        api_base_url = f"http://127.0.0.1:{api_port}/v1"
+        api_base_url = default_api_base_url(api_port)
+    else:
+        api_base_url = _upgrade_api_base_url_scheme(api_base_url)
+    api = _apply_api_env_overrides(_parse_api_config(data))
+    _apply_force_https_policy(api, api_base_url)
+    api.auth = _default_auth_for_bind(api_base_url, api.auth)
     return ScoutConfig(
         api_port=api_port,
         api_base_url=api_base_url,
         spaces=spaces,
         embed=embed,
+        api=api,
     )
 
 
@@ -183,6 +327,20 @@ def save_config(home: Path, config: ScoutConfig) -> None:
             "skip": {"globs": space.skip_globs, "paths": space.skip_paths},
             "respect_gitignore": space.respect_gitignore,
         }
+    payload["api"] = {
+        "auth": {
+            "enabled": config.api.auth.enabled,
+            "key": config.api.auth.key,
+            "admin_key": config.api.auth.admin_key,
+            "health_public": config.api.auth.health_public,
+        },
+        "cors_origins": list(config.api.cors_origins),
+        "force_https": config.api.force_https,
+        "rate_limit": {
+            "search_per_minute": config.api.rate_limit.search_per_minute,
+            "reindex_per_hour": config.api.rate_limit.reindex_per_hour,
+        },
+    }
     config_path(home).write_text(
         yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
     )
@@ -260,6 +418,19 @@ def validate_space(home: Path, space: str) -> SpaceEntry:
     return entry
 
 
+def _validate_embed_endpoint(endpoint: str) -> None:
+    if not endpoint:
+        return
+    parsed = urlparse(endpoint.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"invalid embed endpoint URL: {endpoint!r}")
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" and host not in _LOCALHOST_HOSTS:
+        raise ValueError(
+            f"embed endpoint must use https:// for non-localhost hosts: {endpoint!r}"
+        )
+
+
 def validate_embed(config: ScoutConfig) -> EmbedConfig:
     if not config.embed.provider:
         raise ValueError("embed provider not configured")
@@ -267,6 +438,7 @@ def validate_embed(config: ScoutConfig) -> EmbedConfig:
         raise ValueError("embed model not configured")
     if config.embed.dimensions <= 0:
         raise ValueError("embed dimensions not configured")
+    _validate_embed_endpoint(config.embed.endpoint)
     return config.embed
 
 

@@ -794,6 +794,17 @@ Scout stores state under `.scout/` (project-local if present, else `~/.scout/`).
 ```yaml
 api_base_url: http://127.0.0.1:8741/v1
 api_port: 8741
+api:
+  auth:
+    enabled: false
+    health_public: true
+  cors_origins:
+    - http://127.0.0.1:3000
+    - http://localhost:3000
+  force_https: false
+  rate_limit:
+    search_per_minute: 60
+    reindex_per_hour: 3
 spaces:
   myapp:
     root: /path/to/project/src    # or whole repo if you picked option 0 at setup
@@ -818,7 +829,51 @@ openrouter_api_key: sk-or-...
 lmstudio_api_key: ...       # if your local server requires auth
 ```
 
-Environment overrides: `LMSTUDIO_API_KEY`, `SCOUT_API_URL`, `SCOUT_API_TOKEN`.
+Environment overrides: `LMSTUDIO_API_KEY`, `SCOUT_API_URL`, `SCOUT_API_KEY`, `SCOUT_ADMIN_KEY`, `SCOUT_CORS_ORIGINS`, `SCOUT_FORCE_HTTPS`, `SCOUT_AUTH_ENABLED`.
+
+---
+
+## Security
+
+Protect `scout serve` when exposed beyond localhost.
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `SCOUT_API_KEY` | Bearer token for read API access (overrides `config.yaml`) |
+| `SCOUT_ADMIN_KEY` | Bearer token for `reindex` and `clear session index` |
+| `SCOUT_AUTH_ENABLED` | `1` / `0` — force auth on/off |
+| `SCOUT_CORS_ORIGINS` | Comma-separated CORS whitelist |
+| `SCOUT_FORCE_HTTPS` | `1` — redirect HTTP→HTTPS (honors `X-Forwarded-Proto`) |
+
+Setup generates `api.auth.key` and `api.auth.admin_key` in `config.yaml`. Prefer env vars in production; never commit keys.
+
+### Auth flow
+
+```bash
+export SCOUT_API_KEY="your-read-key"
+curl -s -H "Authorization: Bearer $SCOUT_API_KEY" \
+  "http://127.0.0.1:8741/v1/spaces/list"
+```
+
+Admin rebuild:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $SCOUT_ADMIN_KEY" \
+  "http://127.0.0.1:8741/v1/spaces/myapp/reindex"
+```
+
+`GET /v1/health` stays public when `api.auth.health_public: true` (default).
+
+### Hardening checklist
+
+- Bind to `127.0.0.1` for local dev; enable auth for remote bind
+- Set `SCOUT_API_KEY` / `SCOUT_ADMIN_KEY` via env, not plaintext in repo
+- Use `chmod 600` on `secrets.yaml`; embed endpoints must be `https://` except localhost
+- Put TLS termination in front (reverse proxy); set `SCOUT_FORCE_HTTPS=1` when appropriate
+- Restrict CORS with `SCOUT_CORS_ORIGINS`
+- CI runs `pip-audit` — fix HIGH/CRITICAL dependency CVEs before release
 
 ---
 

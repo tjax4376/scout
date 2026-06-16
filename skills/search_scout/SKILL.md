@@ -11,6 +11,7 @@ Map code structure via Scout graph, then read full source from disk. Default set
 
 - `scout_api`: {{SCOUT_API}} (injected at setup from `config.yaml`)
 - `default_space`: {{DEFAULT_SPACE}}
+- **Auth:** when Scout auth enabled, set `SCOUT_API_KEY` or `Authorization: Bearer` on all requests
 - **Default API** (when env/config unset): `http://127.0.0.1:8747/v1`
 
 Resolution order for `scout_api.py`: `SCOUT_API_URL` → `~/.scout/config.yaml` → port **8747** default.
@@ -46,13 +47,15 @@ Resolution order for `scout_api.py`: `SCOUT_API_URL` → `~/.scout/config.yaml` 
 ## Map symbols
 
 ```bash
-curl -s "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/symbols?path_prefix=src/"
+curl -s -H "Authorization: Bearer $SCOUT_API_KEY" \
+  "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/symbols?path_prefix=src/"
 ```
 
 ## Read source
 
 ```bash
-curl -s "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/file?rel_path=src/auth.py&start_line=1&end_line=40"
+curl -s -H "Authorization: Bearer $SCOUT_API_KEY" \
+  "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/file?rel_path=src/auth.py&start_line=1&end_line=40"
 ```
 
 ## Session search
@@ -61,6 +64,7 @@ curl -s "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/file?rel_path=src/auth.py&start_
 # After scout serve --embed and reading files via GET /file
 curl -s -X POST "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/search" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SCOUT_API_KEY" \
   -d '{"query": "auth handler", "top_k": 5}'
 ```
 

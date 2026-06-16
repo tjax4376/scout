@@ -13,6 +13,9 @@ pub fn resolve_under_root(root: &Path, rel_path: &str) -> ScoutResult<PathBuf> {
     if rel_path.is_empty() {
         return Err(ScoutError::InvalidPath("rel_path is required".into()));
     }
+    if rel_path.contains('%') {
+        return Err(ScoutError::InvalidPath("invalid path encoding".into()));
+    }
     if rel_path.contains("..") {
         return Err(ScoutError::InvalidPath("path traversal not allowed".into()));
     }
@@ -154,6 +157,44 @@ mod tests {
         let err = read_workspace_file(&dir, "../etc/passwd", None, None).unwrap_err();
         assert!(matches!(err, ScoutError::InvalidPath(_)));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejects_encoded_parent_dir_segments() {
+        let dir = std::env::temp_dir().join(format!(
+            "scout-file-encoded-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = read_workspace_file(&dir, "%2e%2e/etc/passwd", None, None).unwrap_err();
+        assert!(matches!(err, ScoutError::InvalidPath(_)));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let parent = std::env::temp_dir().join(format!(
+            "scout-file-symlink-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let dir = parent.join("space");
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = parent.join("outside.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        symlink(&outside, dir.join("link.txt")).unwrap();
+
+        let err = read_workspace_file(&dir, "link.txt", None, None).unwrap_err();
+        assert!(matches!(err, ScoutError::InvalidPath(_)));
+        let _ = std::fs::remove_dir_all(parent);
     }
 
     #[test]

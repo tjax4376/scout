@@ -45,6 +45,7 @@ def graph_backend(
     session_id: str,
     trace: TraceStore,
     repo_root: Path,
+    token: str = "",
 ) -> GraphReviewBackend:
-    client = ScoutTraceClient(scout_api, space, session_id, trace)
+    client = ScoutTraceClient(scout_api, space, session_id, trace, token=token)
     return GraphReviewBackend(client, repo_root=repo_root)

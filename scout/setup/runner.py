@@ -7,13 +7,17 @@ Updated: 2026-06-14 — graph-only indexing; no embed step.
 from __future__ import annotations
 
 import httpx
+import secrets as secrets_mod
 import typer
 from rich.console import Console
+from urllib.parse import urlparse
 
 from scout.config import (
     EmbedConfig,
     SpaceEntry,
+    _apply_force_https_policy,
     bootstrap_scout_dir,
+    is_loopback_host,
     load_config,
     load_secrets,
     prescan_path,
@@ -79,8 +83,20 @@ async def run_setup(
     config.api_base_url = normalize_api_base_url(api_url)
     endpoint = parse_api_base_url(config.api_base_url)
     config.api_port = endpoint.port
+    _apply_force_https_policy(config.api, config.api_base_url)
     ensure_api_port_available(config)
+    if not config.api.auth.key:
+        config.api.auth.key = secrets_mod.token_urlsafe(32)
+    if not config.api.auth.admin_key:
+        config.api.auth.admin_key = secrets_mod.token_urlsafe(32)
+    host = (urlparse(config.api_base_url).hostname or "127.0.0.1").lower()
+    if not is_loopback_host(host):
+        config.api.auth.enabled = True
     save_config(home, config)
+    rich_console.print(
+        "[dim]API auth keys saved in config.yaml (api.auth) — "
+        "prefer SCOUT_API_KEY / SCOUT_ADMIN_KEY env in production[/dim]"
+    )
 
     branch = prompt_setup_branch()
 

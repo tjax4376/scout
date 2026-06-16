@@ -1,6 +1,6 @@
 # Scout API Contracts
 
-REST API exposed by `scout serve`. All routes live under `/v1`. Base URL configured at setup as `api_base_url` in `.scout/config.yaml` (default `http://127.0.0.1:8741/v1`).
+REST API exposed by `scout serve`. All routes live under `/v1`. Base URL configured at setup as `api_base_url` in `.scout/config.yaml` (default `http://127.0.0.1:8741/v1` on loopback; non-loopback hosts default to `https`).
 
 **Metadata:** v0.1.0 | Scout Contributors | 2026-06-12
 
@@ -13,8 +13,9 @@ REST API exposed by `scout serve`. All routes live under `/v1`. Base URL configu
 | Start server | `scout serve` |
 | Stop server | `scout stop-serve` |
 | Default port | `8741` (scan range `8741`–`8799` at setup if busy) |
-| Base URL format | `http://<host>:<port>/v1` |
-| Auth (MVP1) | None |
+| Base URL format | `http://<host>:<port>/v1` (loopback) or `https://<host>:<port>/v1` (LAN/public) |
+| HTTPS enforcement | `api.force_https` or `SCOUT_FORCE_HTTPS=1`; auto-enabled for non-loopback and `https://` URLs |
+| Auth | Bearer token when `api.auth.enabled` (default off on localhost) |
 | Content-Type (POST bodies) | `application/json` |
 | OpenAPI spec | `GET /v1/openapi.json` |
 | Interactive docs | `GET /docs` (FastAPI Swagger UI) |
@@ -22,6 +23,30 @@ REST API exposed by `scout serve`. All routes live under `/v1`. Base URL configu
 | Multi-space | One `scout serve` serves all spaces in `config.yaml` |
 
 Path convention: `{BASE}` = configured base URL including `/v1`, e.g. `http://127.0.0.1:8741/v1`.
+
+---
+
+## Authentication
+
+When `api.auth.enabled` is true (auto-enabled for non-localhost bind URLs), clients send:
+
+```http
+Authorization: Bearer <SCOUT_API_KEY>
+```
+
+| Class | Routes | Key |
+|-------|--------|-----|
+| Public (optional) | `GET /v1/health` when `api.auth.health_public` | none |
+| Read | All other `/v1` routes | `SCOUT_API_KEY` or `api.auth.key` |
+| Admin | `POST /reindex`, `DELETE /session/index` | `SCOUT_ADMIN_KEY` or `api.auth.admin_key` |
+
+Missing/invalid token → `401 {"detail":"unauthorized"}`. Read key on admin route → `403 {"detail":"forbidden"}`.
+
+Rate limits: `POST /search` (default 60/min), `POST /reindex` (default 3/hour) → `429` with `Retry-After`. Limits are keyed per client IP **and** `Authorization` bearer token.
+
+Unsafe workspace paths (`..`, absolute paths, URL-encoded traversal) on file/symbol routes → `400`.
+
+Security response headers (all routes): `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy`, `Referrer-Policy`; `Strict-Transport-Security` on HTTPS. `/graph` static assets use `Cache-Control: no-store`.
 
 ---
 

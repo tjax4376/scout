@@ -12,6 +12,14 @@
 
 **Fix:** Use `hawkeye setup --scout-api http://127.0.0.1:PORT/v1 --space NAME`. Discovery validates via `/spaces/list` only (no bare `/symbols` probe).
 
+## OpenSpec CI validation fails (no changes/ in checkout)
+
+**Symptom:** `no change directories found under openspec/changes/` or `no rest-api/spec.md found`.
+
+**Cause:** `openspec/` was gitignored — only `config.yaml` tracked; specs and tests missing in CI.
+
+**Fix:** Track `openspec/specs/` + `openspec/config.yaml`; keep `openspec/changes/` gitignored (local drafts). Validator uses canonical `openspec/specs/rest-api/spec.md` when no active changes. Run `python scripts/validate_openspec.py` before push.
+
 ## Hawkeye standalone binary
 
 **Symptom:** Need Hawkeye without Python venv.

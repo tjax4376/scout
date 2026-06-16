@@ -33,7 +33,8 @@ __pycache__/
 secrets.yaml
 journal/
 open_spec/
-openspec/
+# OpenSpec active drafts stay local; specs/ and config.yaml are tracked
+openspec/changes/
 makefile 
 
 # Build artifacts

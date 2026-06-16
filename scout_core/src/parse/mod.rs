@@ -1,3 +1,4 @@
+mod capture_map;
 mod go;
 mod javascript;
 mod python;
@@ -15,6 +16,7 @@ use crate::error::{ScoutError, ScoutResult};
 use crate::scan::is_config_or_doc;
 use crate::types::{NodeKind, SymbolInfo};
 
+pub use capture_map::{node_kind_from_capture, register_language_capture_map};
 pub use go::language as go_language;
 pub use javascript::language as javascript_language;
 pub use python::language as python_language;
@@ -41,6 +43,16 @@ impl SourceLanguage {
             "rs" => Some(Self::Rust),
             "go" => Some(Self::Go),
             _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::TypeScript => "typescript",
+            Self::JavaScript => "javascript",
+            Self::Python => "python",
+            Self::Rust => "rust",
+            Self::Go => "go",
         }
     }
 
@@ -101,39 +113,6 @@ impl SourceLanguage {
     }
 }
 
-fn kind_for_capture(lang: SourceLanguage, node_kind: &str) -> NodeKind {
-    match lang {
-        SourceLanguage::TypeScript | SourceLanguage::JavaScript => match node_kind {
-            "function_declaration" => NodeKind::Function,
-            "method_definition" => NodeKind::Method,
-            "class_declaration" => NodeKind::Class,
-            "interface_declaration" => NodeKind::Interface,
-            "enum_declaration" => NodeKind::Enum,
-            _ => NodeKind::Const,
-        },
-        SourceLanguage::Python => match node_kind {
-            "function_definition" => NodeKind::Function,
-            "class_definition" => NodeKind::Class,
-            _ => NodeKind::Const,
-        },
-        SourceLanguage::Rust => match node_kind {
-            "function_item" => NodeKind::Function,
-            "struct_item" => NodeKind::Struct,
-            "enum_item" => NodeKind::Enum,
-            "trait_item" => NodeKind::Interface,
-            "impl_item" => NodeKind::Module,
-            "const_item" => NodeKind::Const,
-            _ => NodeKind::Function,
-        },
-        SourceLanguage::Go => match node_kind {
-            "function_declaration" => NodeKind::Function,
-            "method_declaration" => NodeKind::Method,
-            "type_declaration" => NodeKind::Struct,
-            _ => NodeKind::Function,
-        },
-    }
-}
-
 /// Parse file and extract symbols; file fallback on failure or non-AST file.
 pub fn extract_symbols(path: &Path, source: &str) -> ScoutResult<Vec<SymbolInfo>> {
     if is_config_or_doc(path) {
@@ -188,7 +167,7 @@ fn extract_from_tree(lang: SourceLanguage, source: &str, tree: &Tree) -> ScoutRe
             }
             let start = node.start_position();
             let end = node.end_position();
-            let kind = kind_for_capture(lang, node.kind());
+            let kind = node_kind_from_capture(lang, node.kind());
             let key = (name.clone(), start.row as u32 + 1, end.row as u32 + 1, kind);
             if !seen.insert(key) {
                 continue;

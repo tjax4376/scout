@@ -16,7 +16,17 @@ from pathlib import Path
 REQUIRED_CHANGE_FILES = ("proposal.md", "design.md", "tasks.md", ".openspec.yaml")
 
 # At least one requirements heading must appear in each spec.md
-REQUIREMENTS_HEADINGS = ("## ADDED Requirements", "## MODIFIED Requirements")
+REQUIREMENTS_HEADINGS = (
+    "## ADDED Requirements",
+    "## MODIFIED Requirements",
+    "## Requirements",
+)
+
+# Canonical rest-api spec (archived baseline — synced with api-contracts.md)
+CANONICAL_REST_API_SPEC = Path("specs") / "rest-api" / "spec.md"
+
+# Active change rest-api specs under openspec/changes/
+REST_API_SPEC_GLOB = "changes/*/specs/rest-api/spec.md"
 
 # Markdown link: [label](target) — http(s) and anchors skipped at resolve time
 LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -41,9 +51,6 @@ EXPOSE_ENDPOINT_RE = re.compile(
     r"expose `(GET|POST|PUT|DELETE|PATCH)\s+([^`]+)`",
     re.IGNORECASE,
 )
-
-# Canonical rest-api spec path(s) under openspec/changes/
-REST_API_SPEC_GLOB = "changes/*/specs/rest-api/spec.md"
 
 # FastAPI route decorators on app: @app.get("/v1/health")
 APP_ROUTE_RE = re.compile(
@@ -171,8 +178,33 @@ def extract_rest_api_spec_endpoints(text: str) -> set[tuple[str, str]]:
     return endpoints
 
 
+def validate_canonical_specs(specs_root: Path) -> list[str]:
+    """Validate archived specs/ tree when no active change directories exist."""
+    errors: list[str] = []
+    if not specs_root.is_dir():
+        errors.append("missing specs/ directory under openspec/")
+        return errors
+
+    spec_files = sorted(specs_root.rglob("spec.md"))
+    if not spec_files:
+        errors.append("specs/ contains no spec.md files")
+        return errors
+
+    for spec_path in spec_files:
+        rel = spec_path.relative_to(specs_root)
+        text = spec_path.read_text(encoding="utf-8")
+        if not any(h in text for h in REQUIREMENTS_HEADINGS):
+            errors.append(f"specs/{rel}: missing Requirements section")
+        if any(h in text for h in REQUIREMENTS_HEADINGS) and SCENARIO_HEADING not in text:
+            errors.append(f"specs/{rel}: requirements present but no #### Scenario: blocks")
+    return errors
+
+
 def find_rest_api_specs(openspec_root: Path) -> list[Path]:
-    """All rest-api/spec.md files across active changes."""
+    """Canonical rest-api spec first; else active change specs."""
+    canonical = openspec_root / CANONICAL_REST_API_SPEC
+    if canonical.is_file():
+        return [canonical]
     return sorted(openspec_root.glob(REST_API_SPEC_GLOB))
 
 
@@ -191,7 +223,7 @@ def validate_api_contracts_sync(
 
     spec_files = find_rest_api_specs(ospec)
     if not spec_files:
-        return ["no rest-api/spec.md found under openspec/changes/"]
+        return ["no rest-api/spec.md found under openspec/specs/ or openspec/changes/"]
 
     spec_eps: set[tuple[str, str]] = set()
     for spec_path in spec_files:
@@ -274,14 +306,20 @@ def validate_openspec(
 
     changes_root = root / "changes"
     change_dirs = find_change_dirs(changes_root)
-    if not change_dirs:
-        result.errors.append(f"no change directories found under {changes_root}")
-        return result
+    if change_dirs:
+        for change_dir in change_dirs:
+            result.errors.extend(validate_change_structure(change_dir))
+    else:
+        result.errors.extend(validate_canonical_specs(root / "specs"))
+        if result.errors:
+            return result
 
-    for change_dir in change_dirs:
-        result.errors.extend(validate_change_structure(change_dir))
-
-    result.errors.extend(validate_markdown_links(root))
+    # Link integrity: canonical specs + active changes (archive may have stale cross-refs)
+    link_roots: list[Path] = [root / "specs"]
+    link_roots.extend(change_dirs)
+    for link_root in link_roots:
+        if link_root.is_dir():
+            result.errors.extend(validate_markdown_links(link_root))
     result.errors.extend(validate_api_contracts_sync(repo, root))
     result.errors.extend(validate_app_routes_sync(repo))
     return result

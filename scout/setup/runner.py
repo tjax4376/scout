@@ -7,7 +7,6 @@ Updated: 2026-06-14 — graph-only indexing; no embed step.
 from __future__ import annotations
 
 import httpx
-import httpx2
 import secrets as secrets_mod
 import typer
 from rich.console import Console

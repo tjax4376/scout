@@ -63,7 +63,7 @@ jobs:
       - name: pip-audit (fail on high/critical)
         run: |
           source .venv/bin/activate
-          pip-audit --format columns --min-severity high
+          pip-audit --format markdown
 
       - name: npm audit when package-lock.json exists
         run: |

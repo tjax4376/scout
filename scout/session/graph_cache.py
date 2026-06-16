@@ -12,6 +12,7 @@ from typing import Any
 
 import scout_core
 
+from scout.api.path_safety import rel_path_matches_prefix
 from scout.config import ScoutConfig, graph_bin_path
 
 ALLOWED_EDGES = {"contains", "imports", "calls"}
@@ -59,7 +60,7 @@ class GraphCache:
         symbols = []
         for node in nodes:
             rel_path = node.get("rel_path") or ""
-            if not rel_path.startswith(path_prefix):
+            if not rel_path_matches_prefix(rel_path, path_prefix):
                 continue
             kind = str(node.get("kind", ""))
             if kind_set and kind not in kind_set:

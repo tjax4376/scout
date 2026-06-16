@@ -50,6 +50,11 @@ class InMemoryRateLimiter:
 _limiter = InMemoryRateLimiter()
 
 
+def reset_rate_limiter() -> None:
+    """Clear in-memory buckets (tests and dev hot reload)."""
+    _limiter._events.clear()
+
+
 def enforce_rate_limit(request: Request, policy: RateLimitPolicy) -> None:
     retry = _limiter.check(request, policy)
     if retry > 0:

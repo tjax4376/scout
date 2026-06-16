@@ -43,6 +43,25 @@ def validate_rel_path(space_root: str | Path, rel_path: str) -> str:
     return normalized
 
 
+def rel_path_matches_prefix(rel_path: str, path_prefix: str) -> bool:
+    """True when rel_path is under path_prefix (segment-safe).
+
+    Trailing slash on prefix means children only (exclude exact directory node).
+    """
+    if not path_prefix:
+        return bool(rel_path)
+    raw = path_prefix.strip().replace("\\", "/")
+    if not raw:
+        return True
+    children_only = raw.endswith("/")
+    prefix = posixpath.normpath(raw)
+    if not prefix or prefix == ".":
+        return True
+    if rel_path == prefix:
+        return not children_only
+    return rel_path.startswith(f"{prefix}/")
+
+
 def validate_path_prefix(path_prefix: str | None) -> str:
     """Validate optional path_prefix query/filter value."""
     if path_prefix is None:
@@ -53,9 +72,14 @@ def validate_path_prefix(path_prefix: str | None) -> str:
     if "\0" in value:
         raise PathSafetyError("invalid path_prefix")
     decoded = unquote(value.replace("\\", "/"))
+    children_only = decoded.endswith("/")
     normalized = posixpath.normpath(decoded)
     if normalized.startswith("/"):
         raise PathSafetyError("invalid path_prefix")
     if ".." in normalized.split("/"):
         raise PathSafetyError("invalid path_prefix")
+    if not normalized or normalized == ".":
+        return ""
+    if children_only:
+        return f"{normalized}/"
     return normalized

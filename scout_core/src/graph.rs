@@ -10,6 +10,7 @@ use crate::error::{ScoutError, ScoutResult};
 use crate::location_ref::compute_location_ref;
 use crate::node_id::compute_node_id;
 use crate::parse::extract_symbols;
+use crate::path_prefix::rel_path_matches_prefix;
 use crate::scan::resolve_path;
 use crate::types::ScannedFile;
 use crate::types::{
@@ -176,7 +177,7 @@ impl CodeGraph {
     ) -> Vec<GraphNodeData> {
         self.graph
             .node_weights()
-            .filter(|n| !n.rel_path.is_empty() && n.rel_path.starts_with(path_prefix))
+            .filter(|n| !n.rel_path.is_empty() && rel_path_matches_prefix(&n.rel_path, path_prefix))
             .filter(|n| kinds.is_empty() || kinds.contains(&n.kind))
             .cloned()
             .collect()

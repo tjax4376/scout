@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from scout.api.path_safety import PathSafetyError, validate_path_prefix, validate_rel_path
+from scout.api.path_safety import (
+    PathSafetyError,
+    rel_path_matches_prefix,
+    validate_path_prefix,
+    validate_rel_path,
+)
 
 
 def test_validate_rel_path_accepts_normal_file(tmp_path) -> None:
@@ -35,3 +40,17 @@ def test_validate_rel_path_rejects_null_byte(tmp_path) -> None:
 def test_validate_path_prefix_rejects_traversal() -> None:
     with pytest.raises(PathSafetyError, match="path_prefix"):
         validate_path_prefix("../../etc")
+
+
+def test_rel_path_matches_prefix_trailing_slash_children_only() -> None:
+    assert not rel_path_matches_prefix("src", "src/")
+    assert rel_path_matches_prefix("src/auth.py", "src/")
+
+
+def test_rel_path_matches_prefix_without_trailing_slash_includes_dir() -> None:
+    assert rel_path_matches_prefix("src", "src")
+    assert rel_path_matches_prefix("src/auth.py", "src")
+
+
+def test_rel_path_matches_prefix_rejects_similar_names() -> None:
+    assert not rel_path_matches_prefix("src_extra/foo.py", "src/")

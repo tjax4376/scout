@@ -62,9 +62,11 @@
 
 ## Scout API rate limit 429
 
-**Symptom:** `429 rate limit exceeded` on search/reindex despite low traffic.
+**Symptom:** `429 rate limit exceeded` on search/reindex despite low traffic; or `test_search_rate_limit_returns_429` fails in full suite (`first.status_code != 429`).
 
-**Fix:** Limits are per IP **and** bearer token. Shared NAT users need distinct keys. Tune `api.rate_limit.search_per_minute` / `reindex_per_hour` in config.
+**Cause:** Limits per IP **and** bearer token. Shared NAT users need distinct keys. In-memory limiter is process-global — earlier search tests consume the same bucket.
+
+**Fix:** Tune `api.rate_limit.search_per_minute` / `reindex_per_hour` in config. API tests autouse `reset_rate_limiter()` via `tests/api/conftest.py`.
 
 ## Scout API path traversal 400
 

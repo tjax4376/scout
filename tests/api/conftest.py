@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scout.api.app import create_app
+from scout.api.rate_limit import reset_rate_limiter
 from scout.config import (
     ScoutConfig,
     SpaceEntry,
@@ -15,6 +16,14 @@ from scout.config import (
     index_db_path,
     save_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_api_rate_limiter() -> None:
+    """Isolate rate-limit tests from prior search requests in the suite."""
+    reset_rate_limiter()
+    yield
+    reset_rate_limiter()
 
 
 @pytest.fixture

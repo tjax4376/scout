@@ -12,6 +12,7 @@ pub mod location_ref;
 pub mod index;
 pub mod node_id;
 pub mod parse;
+pub mod path_prefix;
 pub mod pyapi;
 pub mod scan;
 pub mod search;

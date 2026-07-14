@@ -53,7 +53,7 @@ Documentation = "https://github.com/tjax4376/scout#readme"
 manifest-path = "scout_core/Cargo.toml"
 module-name = "scout_core"
 features = ["extension-module"]
-python-packages = ["scout"]
+python-packages = ["scout", "skills"]
 # Stable ABI wheel (cp311-abi3): one wheel per platform for Python 3.11+
 py-limited-api = true
 

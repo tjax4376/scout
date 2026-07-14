@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Scout build & run helper.
 #
-# Metadata: v0.1.2 | Scout Contributors | 2026-06-15
+# Metadata: v0.2.0 | Scout Contributors | 2026-06-15
 # Rationale: one entrypoint for dev + production binary build, API start, Hawkeye verify.
 # Usage:
 #   scripts/scout.sh build dev          # clean, build, activate .venv, start scout serve
 #   scripts/scout.sh build production   # release wheel → .venv-prod
+#   scripts/scout.sh build install      # build wheel + pip install
+#   scripts/scout.sh build install --pipx
+#   scripts/scout.sh build install --prefix /opt/scout
+#   scripts/scout.sh build hawkeye-install  # build PyInstaller binary + install
+#   scripts/scout.sh build hawkeye-install --prefix /usr/local/bin
 #   scripts/scout.sh start              # scout serve only (skip build)
 #   scripts/scout.sh start production   # scout serve from production install
 #   scripts/scout.sh test               # pytest (all tests)
@@ -19,6 +24,8 @@ VENV="$ROOT/.venv"
 PROD_VENV="$ROOT/.venv-prod"
 DIST="$ROOT/dist"
 PYTHON="${PYTHON:-python3}"
+INSTALL_PIPX=""
+INSTALL_PREFIX=""
 
 # Python 3.14+ needs abi3 forward compat at pyo3 build time.
 export PYO3_USE_ABI3_FORWARD_COMPATIBILITY="${PYO3_USE_ABI3_FORWARD_COMPATIBILITY:-1}"
@@ -28,9 +35,10 @@ usage() {
 Usage:
   $(basename "$0") build dev          # clean, build, start serve (foreground)
   $(basename "$0") build production
+  $(basename "$0") build install [--pipx | --prefix /path]
+  $(basename "$0") build hawkeye-install [--prefix /path]
   $(basename "$0") start              # serve only (skip build)
   $(basename "$0") start production
-  $(basename "$0") build hawkeye-binary # PyInstaller → dist/hawkeye
   $(basename "$0") test [hawkeye]     # pytest (all, or tests/hawkeye only)
   $(basename "$0") validate
 EOF
@@ -103,6 +111,67 @@ clean_for_dev_build() {
 build_hawkeye_binary() {
   cd "$ROOT"
   exec "$ROOT/scripts/build_hawkeye_binary.sh"
+}
+
+build_install() {
+  cd "$ROOT"
+  echo "=== Building and installing scout ==="
+  rm -rf "$DIST"
+  maturin build --release --out "$DIST"
+  WHEEL="$(ls "$DIST"/scout-*.whl | head -1)"
+  if [[ ! -f "$WHEEL" ]]; then
+    echo "Wheel not found in $DIST" >&2
+    exit 1
+  fi
+  echo "Built wheel: $WHEEL"
+
+  if [[ -n "$INSTALL_PREFIX" ]]; then
+    # Install into custom prefix venv
+    echo "Creating venv at $INSTALL_PREFIX..."
+    "$PYTHON" -m venv "$INSTALL_PREFIX"
+    "${INSTALL_PREFIX}/bin/pip" install -q -U pip
+    "${INSTALL_PREFIX}/bin/pip" install -q "$WHEEL"
+    echo "Verifying install at $INSTALL_PREFIX..."
+    "${INSTALL_PREFIX}/bin/scout" --help >/dev/null
+    "${INSTALL_PREFIX}/bin/hawkeye" --help >/dev/null
+    echo "OK: scout installed at $INSTALL_PREFIX (run: $INSTALL_PREFIX/bin/scout)"
+  elif [[ "$INSTALL_PIPX" == "1" ]]; then
+    # Install via pipx from source directory (pipx doesn't accept wheel files)
+    echo "Installing via pipx from source directory..."
+    pipx install --force .
+    echo "Verifying pipx install..."
+    local PIPX_BIN
+    PIPX_BIN="$HOME/.local/bin"
+    "$PIPX_BIN/scout" --help >/dev/null
+    "$PIPX_BIN/hawkeye" --help >/dev/null
+    echo "OK: scout installed via pipx"
+  else
+    # Install into current venv
+    if [[ -d "$VENV" ]] && [[ -x "$VENV/bin/pip" ]]; then
+      source "$VENV/bin/activate"
+    fi
+    pip install -q -U pip
+    pip install -q --force-reinstall "$WHEEL"
+    echo "Verifying install..."
+    scout --help >/dev/null
+    hawkeye --help >/dev/null
+    echo "OK: scout installed and verified"
+  fi
+}
+
+build_hawkeye_install() {
+  cd "$ROOT"
+  echo "=== Building and installing hawkeye binary ==="
+  local DEFAULT_PREFIX
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    DEFAULT_PREFIX="$HOME/bin"
+  else
+    DEFAULT_PREFIX="$HOME/.local/bin"
+  fi
+  if [[ -z "$INSTALL_PREFIX" ]]; then
+    INSTALL_PREFIX="$DEFAULT_PREFIX"
+  fi
+  exec "$ROOT/scripts/build_hawkeye_binary.sh" --prefix "$INSTALL_PREFIX"
 }
 
 build_dev() {
@@ -206,6 +275,29 @@ run_tests() {
   exec pytest -q "${@}"
 }
 
+parse_install_flags() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pipx)
+        INSTALL_PIPX="1"
+        shift
+        ;;
+      --prefix)
+        if [[ $# -lt 2 ]] || [[ -z "${2:-}" ]]; then
+          echo "--prefix requires a path argument" >&2
+          exit 1
+        fi
+        INSTALL_PREFIX="$2"
+        shift 2
+        ;;
+      *)
+        echo "Unknown flag: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
 is_prod_target() {
   case "${1:-}" in
     production | prod) return 0 ;;
@@ -219,6 +311,16 @@ case "${1:-}" in
       dev) build_dev ;;
       production | prod) build_production ;;
       hawkeye-binary) build_hawkeye_binary ;;
+      install)
+        shift 2
+        parse_install_flags "$@"
+        build_install
+        ;;
+      hawkeye-install)
+        shift 2
+        parse_install_flags "$@"
+        build_hawkeye_install
+        ;;
       *) usage ;;
     esac
     ;;

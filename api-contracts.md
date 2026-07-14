@@ -63,9 +63,14 @@ Security response headers (all routes): `X-Content-Type-Options`, `X-Frame-Optio
 | `GET` | `/v1/spaces/{space}/file` | Read workspace source file or line range |
 | `GET` | `/v1/spaces/{space}/graph/search` | Graph symbol/path search (no embed) |
 | `GET` | `/v1/spaces/{space}/graph/file` | Symbols in file + depth-1 neighbors |
+| `POST` | `/v1/spaces/{space}/ask` | Structure ask via graph (no embed / no LLM) |
 | `GET` | `/v1/spaces/{space}/session/status` | Session embed queue/index stats (`scout serve --embed` only) |
 | `DELETE` | `/v1/spaces/{space}/session/index` | Clear session vector index (`scout serve --embed` only) |
 | `POST` | `/v1/spaces/{space}/reindex` | Synchronous full index rebuild |
+| `POST` | `/v1/spaces/{space}/memory` | Create structured memory |
+| `GET` | `/v1/spaces/{space}/memory/{memory_id}` | Get memory by ID |
+| `GET` | `/v1/spaces/{space}/memories` | List/search memories |
+| `POST` | `/v1/spaces/{space}/memory/ask` | Ask memory store for prompt context |
 
 ---
 
@@ -734,6 +739,59 @@ Return all symbol nodes in a file plus depth-1 neighbors and connecting edges. U
 ```bash
 curl -s "{BASE}/spaces/myapp/graph/file?rel_path=src/auth.py"
 ```
+
+---
+
+## 12. Ask structure (no embed / no LLM)
+
+### `POST /v1/spaces/{space}/ask`
+
+Answer code-structure questions from `graph.bin` using symbol/path matching and optional neighbor expansion. **No embed provider and no LLM.** Response omits source bodies and `compressed_text`. Shares the **search** rate-limit bucket (`api.rate_limit.search_per_minute`).
+
+| Body field | Required | Default | Description |
+|------------|----------|---------|-------------|
+| `query` | yes | — | Symbol or path fragment (1–5000 chars) |
+| `top_k` | no | `10` | Max seed hits (1–50) |
+| `expand_depth` | no | `1` | Neighbor expand depth (0–2) |
+| `max_nodes` | no | `50` | Cap total nodes returned (1–200) |
+| `path_prefix` | no | — | Optional workspace-relative path filter |
+
+#### Response `200 OK`
+
+```json
+{
+  "query": "authenticate",
+  "hits": [
+    {
+      "node_id": "abc123",
+      "kind": "function",
+      "symbol": "authenticate",
+      "rel_path": "src/auth.py",
+      "location_ref": "src=/src/auth.py",
+      "start_line": 1,
+      "end_line": 20,
+      "score": 0.5
+    }
+  ],
+  "edges": [
+    {"from_id": "abc123", "to_id": "def456", "kind": "calls"}
+  ],
+  "total": 1,
+  "mode": "graph",
+  "truncated": false
+}
+```
+
+#### Examples
+
+```bash
+curl -s -X POST "{BASE}/spaces/myapp/ask" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SCOUT_API_KEY" \
+  -d '{"query":"authenticate","expand_depth":1}'
+```
+
+Returns `400` for empty/invalid query, `404` for unknown space or missing graph index.
 
 ---
 

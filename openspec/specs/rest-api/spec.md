@@ -100,3 +100,70 @@ The system SHALL serve graph visualization static assets from `/graph` on the sa
 #### Scenario: Static assets served
 - **WHEN** client requests `GET /graph/` or `GET /graph/index.html`
 - **THEN** the system returns the graph visualization HTML entry point
+
+### Requirement: Create memory endpoint
+The system SHALL expose `POST /v1/spaces/{space}/memory` accepting JSON with `title` (required), `body` (required), `tags` (optional array), and `category` (optional). When `category` is omitted, the system SHALL return HTTP 409 with suggested categories. When provided, the system SHALL create a memory file and return HTTP 201 with the memory object.
+
+#### Scenario: Create memory with category
+- **WHEN** client sends `POST /v1/spaces/{space}/memory` with `title`, `body`, and `category`
+- **THEN** the system returns HTTP 201 with the created memory object
+
+#### Scenario: Create memory without category
+- **WHEN** client sends `POST /v1/spaces/{space}/memory` without `category`
+- **THEN** the system returns HTTP 409 with `suggested_categories` array
+
+### Requirement: Get memory endpoint
+The system SHALL expose `GET /v1/spaces/{space}/memory/{memory_id}` returning the full memory object for an existing memory.
+
+#### Scenario: Get existing memory
+- **WHEN** client sends `GET /v1/spaces/{space}/memory/{memory_id}` for a valid ID
+- **THEN** the system returns HTTP 200 with the memory object
+
+#### Scenario: Get non-existent memory
+- **WHEN** client sends `GET /v1/spaces/{space}/memory/{memory_id}` for an unknown ID
+- **THEN** the system returns HTTP 404
+
+### Requirement: List memories endpoint
+The system SHALL expose `GET /v1/spaces/{space}/memories` with optional query parameters `category`, `tag` (repeatable), and `q` (full-text search). The response SHALL include a `memories` array and `total` count.
+
+#### Scenario: List all memories
+- **WHEN** client sends `GET /v1/spaces/{space}/memories` with no filters
+- **THEN** the system returns HTTP 200 with a `memories` array and `total` count
+
+#### Scenario: Filter by category
+- **WHEN** client sends `GET /v1/spaces/{space}/memories?category=api`
+- **THEN** the system returns only memories matching the category
+
+### Requirement: Ask memory endpoint
+The system SHALL expose `POST /v1/spaces/{space}/memory/ask` accepting JSON with `query` (required, string, min 1 char, max 5000 chars). The endpoint SHALL search the space's memory store and return the most relevant memories as context. Returns HTTP 200 with `memories` array, `total` count, and echoed `query`. Returns HTTP 400 for empty query, HTTP 404 for unknown space.
+
+#### Scenario: Ask with query returns relevant memories
+- **WHEN** client sends `POST /v1/spaces/{space}/memory/ask` with `{"query": "user preferences for code style"}`
+- **THEN** the system returns HTTP 200 with a `memories` array containing matching memories and a `total` count
+
+#### Scenario: Ask with empty query returns error
+- **WHEN** client sends `POST /v1/spaces/{space}/memory/ask` with `{"query": ""}`
+- **THEN** the system returns HTTP 400 with an error detail
+
+#### Scenario: Ask with no matching memories
+- **WHEN** client sends `POST /v1/spaces/{space}/memory/ask` with a query that matches no memories
+- **THEN** the system returns HTTP 200 with an empty `memories` array and `total: 0`
+
+#### Scenario: Ask on unknown space
+- **WHEN** client sends `POST /v1/spaces/{space}/memory/ask` for a space not in config
+- **THEN** the system returns HTTP 404
+
+### Requirement: Ask structure endpoint
+The system SHALL expose `POST /v1/spaces/{space}/ask` accepting JSON with `query` (required, string, min 1 char, max 5000 chars) and optional `top_k`, `expand_depth`, `max_nodes`, and `path_prefix`. The endpoint SHALL resolve the query against the space graph index without embed or LLM processing and return compact structure hits (and optional edges) suitable for agent context. Full source content SHALL NOT be included in the ask response. Returns HTTP 200 on success, HTTP 400 for invalid input, HTTP 404 for unknown space or missing graph. Shares the search per-minute rate-limit bucket.
+
+#### Scenario: Successful structure ask
+- **WHEN** client sends `POST /v1/spaces/{space}/ask` with a valid non-empty `query` and the graph index contains matches
+- **THEN** the system returns HTTP 200 with `hits`, `total`, echoed `query`, and `mode` `"graph"`
+
+#### Scenario: Ask does not require vector index
+- **WHEN** client calls ask while serve is graph-only without `--embed`
+- **THEN** the system returns structure results from the graph (HTTP 200) rather than HTTP 503
+
+#### Scenario: Invalid ask query
+- **WHEN** client sends ask with empty or oversize `query`
+- **THEN** the system returns HTTP 400

@@ -26,9 +26,13 @@ Behind a TLS-terminating reverse proxy, set `X-Forwarded-Proto: https` so HSTS h
 |--------|------|-------|
 | GET | `/v1/health` | Liveness |
 | GET | `/v1/spaces/list` | Reads `config.yaml` only (no scout_core) |
+| POST | `/v1/spaces/{space}/ask` | Graph structure ask (no embed / no LLM); compact hits + edges |
 | POST | `/v1/spaces/{space}/search` | Embed query → scout_core search |
 | GET | `/v1/spaces/{space}/node/{node_id}` | Full chunk lookup |
 | POST | `/v1/spaces/{space}/reindex` | Sync rebuild, 409 if lock held |
+| POST | `/v1/spaces/{space}/memory` | Create memory; 409 if no category (recommends) |
+| GET | `/v1/spaces/{space}/memory/{id}` | Get memory by ID |
+| GET | `/v1/spaces/{space}/memories` | List/search memories (filters: category, tag, q) |
 
 Full request/response shapes: [`api-contracts.md`](../../api-contracts.md) at repo root.
 
@@ -46,8 +50,8 @@ Route changes must update **api-contracts.md**, **rest-api/spec.md**, and **app.
 
 ## Dependencies
 
-- **Python:** fastapi, uvicorn, pydantic
-- **Internal:** `scout.config`, `scout.indexing`, `scout.embed.registry`
+- **Python:** fastapi, uvicorn, pydantic, pyyaml
+- **Internal:** `scout.config`, `scout.indexing`, `scout.embed.registry`, `scout.memory`
 - **Rust:** scout_core (via pyo3) for search/reindex paths
 
 ## Local dev

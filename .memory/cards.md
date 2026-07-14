@@ -60,6 +60,14 @@
 
 **Fix:** Terminate TLS at reverse proxy and forward `X-Forwarded-Proto: https`. For local dev keep loopback `http://127.0.0.1:PORT/v1` with `api.force_https: false`. LAN deploys: use `https://` in `api_base_url` or set `SCOUT_FORCE_HTTPS=1`.
 
+## Scout remote via Tailscale
+
+**Symptom:** MacBook/browser can't hit Scout; only `127.0.0.1:8741` works on host. Tailscale IP `:8741` connection refused.
+
+**Cause:** `scout serve` binds loopback from `api_base_url`.
+
+**Fix:** Keep Scout on localhost. On Scout host: `tailscale serve --bg http://127.0.0.1:8741`. Remote: `https://<hostname>.<tailnet>.ts.net/v1/health` (e.g. `https://evo-tjax.taild02f0a.ts.net/v1/health`) and `/graph/`. Auth still needs `Authorization: Bearer` from `~/.scout/config.yaml`. Disable: `tailscale serve reset`. Do **not** set `api_base_url` to Tailscale IP unless you want rebinding + TLS handling.
+
 ## Scout API rate limit 429
 
 **Symptom:** `429 rate limit exceeded` on search/reindex despite low traffic; or `test_search_rate_limit_returns_429` fails in full suite (`first.status_code != 429`).

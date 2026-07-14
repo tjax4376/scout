@@ -40,8 +40,26 @@ from scout.config import (
     warn_insecure_secrets_file,
 )
 from scout.embed.registry import build_provider
+from scout.ask.models import AskStructureRequest, AskStructureResponse
+from scout.ask.structure import AskGraphMissingError, ask_structure
 from scout.graph_find import graph_path_search
 from scout.indexing import run_reindex
+from scout.memory.categorize import recommend_categories
+from scout.memory.graph import add_memory_node, link_memory_edges
+from scout.memory.models import (
+    AskMemoryRequest,
+    AskMemoryResponse,
+    CategoryRecommendation,
+    MemoryCreateRequest,
+    MemoryListResponse,
+    MemoryResponse,
+)
+from scout.memory.search import ask_memories
+from scout.memory.storage import (
+    create_memory_file,
+    list_memory_files,
+    read_memory_file,
+)
 from scout.security.log_redact import install_secret_redaction
 from scout.session.runtime import SessionRuntime
 
@@ -608,6 +626,212 @@ async def reindex_space(
         _LOG.exception("reindex failed for %s", space)
         raise HTTPException(status_code=500, detail=_GENERIC_500) from exc
     return {"index_version": version, "status": "ok"}
+
+
+# ── Memory endpoints ──────────────────────────────────────────────
+
+
+@v1_router.post("/v1/spaces/{space}/memory", status_code=201)
+def create_memory(
+    space: str,
+    body: MemoryCreateRequest,
+    request: Request,
+) -> MemoryResponse | CategoryRecommendation:
+    home = _home()
+    config = load_config(home)
+    if space not in config.spaces:
+        raise HTTPException(status_code=404, detail=f"unknown space: {space}")
+
+    # Category recommendation if not provided
+    category = body.category
+    if not category:
+        suggested = recommend_categories(home, space, body.title, body.body)
+        if suggested:
+            raise HTTPException(
+                status_code=409,
+                detail=CategoryRecommendation(suggested_categories=suggested).model_dump(),
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="category is required and no suggestions available",
+            )
+
+    try:
+        result = create_memory_file(home, space, body.title, body.body, category, body.tags)
+    except Exception as exc:
+        _LOG.exception("failed to create memory in space %s", space)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Update in-memory cache in embed mode
+    runtime = _session_runtime(request)
+    if _embed_mode(request) and runtime is not None:
+        cache = runtime.memory_cache(space)
+        if cache is not None:
+            cache.add(result)
+
+    # Link into graph
+    try:
+        add_memory_node(
+            home, space, result["id"], result["title"], result["rel_path"]
+        )
+        link_memory_edges(home, space, result["id"], body.body)
+    except Exception:
+        _LOG.warning("graph linking failed for memory %s", result["id"], exc_info=True)
+        # Non-fatal: memory file is created even if graph linking fails
+
+    return MemoryResponse(**result)
+
+
+@v1_router.get("/v1/spaces/{space}/memory/{memory_id}")
+def get_memory(
+    space: str,
+    memory_id: str,
+    request: Request,
+) -> MemoryResponse:
+    home = _home()
+    config = load_config(home)
+    if space not in config.spaces:
+        raise HTTPException(status_code=404, detail=f"unknown space: {space}")
+
+    # Try in-memory cache first in embed mode
+    runtime = _session_runtime(request)
+    if _embed_mode(request) and runtime is not None:
+        cache = runtime.memory_cache(space)
+        if cache is not None:
+            result = cache.get(memory_id)
+            if result:
+                return MemoryResponse(**result)
+
+    result = read_memory_file(home, space, memory_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"memory not found: {memory_id}")
+    return MemoryResponse(**result)
+
+
+@v1_router.get("/v1/spaces/{space}/memories")
+def list_memories(
+    space: str,
+    request: Request,
+    category: str | None = Query(default=None),
+    tag: list[str] | None = Query(default=None),
+    q: str | None = Query(default=None),
+) -> MemoryListResponse:
+    home = _home()
+    config = load_config(home)
+    if space not in config.spaces:
+        raise HTTPException(status_code=404, detail=f"unknown space: {space}")
+
+    # Try in-memory cache first in embed mode
+    runtime = _session_runtime(request)
+    if _embed_mode(request) and runtime is not None:
+        cache = runtime.memory_cache(space)
+        if cache is not None:
+            memories = cache.list(category=category, tag=tag[0] if tag else None, q=q)
+            return MemoryListResponse(memories=memories, total=len(memories))
+
+    memories = list_memory_files(home, space, category=category, tag=tag[0] if tag else None, q=q)
+    return MemoryListResponse(memories=memories, total=len(memories))
+
+
+# ── Ask memory endpoint ───────────────────────────────────────────
+
+
+def _embed_fn_from_request(
+    request: Request, home: Path, config: ScoutConfig
+) -> Any:
+    """Return an embed callable if embed mode is active, else None."""
+    runtime = _session_runtime(request)
+    if not _embed_mode(request) or runtime is None:
+        return None
+    try:
+        embed = validate_embed(config)
+        secrets = load_secrets(home)
+        provider = build_provider(
+            embed.provider,
+            api_key=get_embed_api_key(secrets, embed.provider),
+            endpoint=embed.endpoint or None,
+        )
+        return lambda text: (provider.embed(embed.model, [text]))[0]
+    except Exception:
+        return None
+
+
+@v1_router.post("/v1/spaces/{space}/ask", response_model=AskStructureResponse)
+def ask_space_structure(
+    space: str,
+    body: AskStructureRequest,
+    request: Request,
+    response: Response,
+    _: Annotated[None, Depends(_search_rate_limit)] = None,
+) -> AskStructureResponse:
+    """Graph structure ask — shares search rate-limit bucket (prompt-token-light)."""
+    _require_core()
+    home = _home()
+    config = load_config(home)
+    if space not in config.spaces:
+        raise HTTPException(status_code=404, detail=f"unknown space: {space}")
+
+    try:
+        payload = ask_structure(
+            home,
+            space,
+            config,
+            body.query,
+            top_k=body.top_k,
+            expand_depth=body.expand_depth,
+            max_nodes=body.max_nodes,
+            path_prefix=body.path_prefix,
+        )
+    except AskGraphMissingError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        _LOG.exception("ask structure failed for space %s", space)
+        raise HTTPException(status_code=500, detail=_GENERIC_500) from exc
+    except Exception as exc:
+        _LOG.exception("ask structure failed for space %s", space)
+        raise HTTPException(status_code=500, detail=_GENERIC_500) from exc
+
+    _set_staleness_headers(
+        response,
+        bool(payload.get("stale")),
+        str(payload.get("index_version") or ""),
+    )
+    return AskStructureResponse(
+        query=str(payload["query"]),
+        hits=list(payload.get("hits") or []),
+        edges=list(payload.get("edges") or []),
+        total=int(payload.get("total") or 0),
+        mode="graph",
+        truncated=bool(payload.get("truncated")),
+    )
+
+
+@v1_router.post("/v1/spaces/{space}/memory/ask")
+def ask_memory(
+    space: str,
+    body: AskMemoryRequest,
+    request: Request,
+) -> AskMemoryResponse:
+    home = _home()
+    config = load_config(home)
+    if space not in config.spaces:
+        raise HTTPException(status_code=404, detail=f"unknown space: {space}")
+
+    # Get embed function if in embed mode
+    embed_fn = _embed_fn_from_request(request, home, config)
+
+    try:
+        memories = ask_memories(
+            home, space, body.query, top_k=10, embed_fn=embed_fn
+        )
+    except Exception as exc:
+        _LOG.exception("ask memory failed for space %s", space)
+        raise HTTPException(status_code=500, detail=_GENERIC_500) from exc
+
+    return AskMemoryResponse(memories=memories, total=len(memories), query=body.query)
 
 
 app.include_router(v1_router)

@@ -75,7 +75,7 @@ def _usage() -> None:
         "  scout <space> setup [--agent cursor|pi|opencode] [--force]\n"
         "  scout <space> reindex [--force]\n"
         "  scout <space> search <query> [--top-k N]  # vector or graph path match\n"
-        "  scout serve [--embed] [--no-warm-cache]\n"
+        "  scout serve [--embed] [--no-warm-cache] [--certfile PATH] [--keyfile PATH]\n"
         "  scout stop-serve\n"
         "  scout version\n"
         "\n"
@@ -83,6 +83,7 @@ def _usage() -> None:
         "  scout myapp setup --agent cursor\n"
         "  scout myapp search \"auth handler\"\n"
         "  scout serve --embed\n"
+        "  scout serve --certfile cert.pem --keyfile key.pem\n"
         "  scout stop-serve"
     )
 
@@ -137,6 +138,19 @@ def _main_impl(argv: list[str] | None = None) -> None:
         serve_args = args[1:]
         embed_mode = "--embed" in serve_args
         warm_cache = "--no-warm-cache" not in serve_args
+        certfile: str | None = None
+        keyfile: str | None = None
+        i = 0
+        while i < len(serve_args):
+            if serve_args[i] == "--certfile" and i + 1 < len(serve_args):
+                certfile = serve_args[i + 1]
+                i += 2
+                continue
+            if serve_args[i] == "--keyfile" and i + 1 < len(serve_args):
+                keyfile = serve_args[i + 1]
+                i += 2
+                continue
+            i += 1
         home = bootstrap_scout_dir()
         config = load_config(home)
         api_url = build_scout_api_url(config)
@@ -166,6 +180,8 @@ def _main_impl(argv: list[str] | None = None) -> None:
                 host=endpoint.host,
                 port=endpoint.port,
                 log_level="info",
+                ssl_certfile=certfile,
+                ssl_keyfile=keyfile,
             )
         finally:
             if pid_file.exists():

@@ -9,23 +9,76 @@ import shutil
 from pathlib import Path
 
 AGENT_PATHS = {
-    "cursor": {
-        "global": Path.home() / ".cursor" / "skills" / "search_scout",
-        "project": lambda root: root / ".cursor" / "skills" / "search_scout",
-    },
-    "pi": {
-        "global": Path.home() / ".pi" / "skills" / "search-scout",
-        "project": lambda root: root / ".pi" / "skills" / "search-scout",
-    },
-    "opencode": {
-        "global": Path.home() / ".config" / "opencode" / "skills" / "search_scout",
-        "project": lambda root: root / ".opencode" / "skills" / "search_scout",
-    },
+    "cursor": [
+        {
+            "name": "search_scout",
+            "template": "search_scout",
+            "global": Path.home() / ".cursor" / "skills" / "search_scout",
+            "project": lambda root: root / ".cursor" / "skills" / "search_scout",
+        },
+        {
+            "name": "add_memory",
+            "template": "add_memory",
+            "global": Path.home() / ".cursor" / "skills" / "add_memory",
+            "project": lambda root: root / ".cursor" / "skills" / "add_memory",
+        },
+        {
+            "name": "ask_scout",
+            "template": "ask_scout",
+            "global": Path.home() / ".cursor" / "skills" / "ask_scout",
+            "project": lambda root: root / ".cursor" / "skills" / "ask_scout",
+        },
+    ],
+    "pi": [
+        {
+            "name": "search-scout",
+            "template": "search_scout",
+            "global": Path.home() / ".pi" / "skills" / "search-scout",
+            "project": lambda root: root / ".pi" / "skills" / "search-scout",
+        },
+        {
+            "name": "add-memory",
+            "template": "add_memory",
+            "global": Path.home() / ".pi" / "skills" / "add-memory",
+            "project": lambda root: root / ".pi" / "skills" / "add-memory",
+        },
+        {
+            "name": "ask-scout",
+            "template": "ask_scout",
+            "global": Path.home() / ".pi" / "skills" / "ask-scout",
+            "project": lambda root: root / ".pi" / "skills" / "ask-scout",
+        },
+    ],
+    "opencode": [
+        {
+            "name": "search_scout",
+            "template": "search_scout",
+            "global": Path.home() / ".config" / "opencode" / "skills" / "search_scout",
+            "project": lambda root: root / ".opencode" / "skills" / "search_scout",
+        },
+        {
+            "name": "add_memory",
+            "template": "add_memory",
+            "global": Path.home() / ".config" / "opencode" / "skills" / "add_memory",
+            "project": lambda root: root / ".opencode" / "skills" / "add_memory",
+        },
+        {
+            "name": "ask_scout",
+            "template": "ask_scout",
+            "global": Path.home() / ".config" / "opencode" / "skills" / "ask_scout",
+            "project": lambda root: root / ".opencode" / "skills" / "ask_scout",
+        },
+    ],
 }
 
 
-def skill_template_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "skills" / "search_scout"
+def skill_template_path(skill_name: str) -> Path:
+    return Path(__file__).resolve().parents[2] / "skills" / skill_name
+
+
+def _skill_template_for_config(skill_config: dict) -> Path:
+    """Resolve the template directory for a skill config entry."""
+    return skill_template_path(skill_config["template"])
 
 
 def install_skill(
@@ -40,25 +93,32 @@ def install_skill(
 ) -> list[Path]:
     if agent not in AGENT_PATHS:
         raise ValueError(f"unknown agent: {agent}")
-    template = skill_template_path()
-    if not template.exists():
-        raise FileNotFoundError(f"skill template missing: {template}")
 
     installed: list[Path] = []
-    targets: list[Path] = []
-    if global_install:
-        targets.append(AGENT_PATHS[agent]["global"])
-    if project_install:
-        targets.append(AGENT_PATHS[agent]["project"](project_root))
 
-    for dest in targets:
-        if dest.exists() and not force:
-            raise FileExistsError(f"skill exists at {dest}; use --force to overwrite")
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.copytree(template, dest)
-        _inject_config(dest, scout_api, default_space)
-        installed.append(dest)
+    for skill_config in AGENT_PATHS[agent]:
+        skill_name = skill_config["name"]
+        template = _skill_template_for_config(skill_config)
+        if not template.exists():
+            raise FileNotFoundError(f"skill template missing: {template}")
+
+        targets: list[Path] = []
+        if global_install:
+            targets.append(skill_config["global"])
+        if project_install:
+            targets.append(skill_config["project"](project_root))
+
+        for dest in targets:
+            if dest.exists() and not force:
+                raise FileExistsError(
+                    f"skill {skill_name} exists at {dest}; use --force to overwrite"
+                )
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(template, dest)
+            _inject_config(dest, scout_api, default_space)
+            installed.append(dest)
+
     return installed
 
 

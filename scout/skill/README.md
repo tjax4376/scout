@@ -1,6 +1,6 @@
 # scout.skill
 
-Installs the `search-scout` agent skill from repo template into Cursor, Pi, or OpenCode paths.
+Installs the `search-scout`, `add-memory`, and `ask-scout` agent skills from repo templates into Cursor, Pi, or OpenCode paths.
 
 ## Entry point
 
@@ -8,17 +8,23 @@ Installs the `search-scout` agent skill from repo template into Cursor, Pi, or O
 
 ## Install paths
 
-| Agent | Global | Project |
-|-------|--------|---------|
-| cursor | `~/.cursor/skills/search_scout` | `<project>/.cursor/skills/search_scout` |
-| pi | `~/.pi/skills/search-scout` | `<project>/.pi/skills/search-scout` |
-| opencode | `~/.config/opencode/skills/search_scout` | `<project>/.opencode/skills/search_scout` |
+| Agent | Skill | Global | Project |
+|-------|-------|--------|---------|
+| cursor | search-scout | `~/.cursor/skills/search_scout` | `<project>/.cursor/skills/search_scout` |
+| cursor | add-memory | `~/.cursor/skills/add_memory` | `<project>/.cursor/skills/add_memory` |
+| cursor | ask-scout | `~/.cursor/skills/ask_scout` | `<project>/.cursor/skills/ask_scout` |
+| pi | search-scout | `~/.pi/skills/search-scout` | `<project>/.pi/skills/search-scout` |
+| pi | add-memory | `~/.pi/skills/add-memory` | `<project>/.pi/skills/add-memory` |
+| pi | ask-scout | `~/.pi/skills/ask-scout` | `<project>/.pi/skills/ask-scout` |
+| opencode | search-scout | `~/.config/opencode/skills/search_scout` | `<project>/.opencode/skills/search_scout` |
+| opencode | add-memory | `~/.config/opencode/skills/add_memory` | `<project>/.opencode/skills/add_memory` |
+| opencode | ask-scout | `~/.config/opencode/skills/ask_scout` | `<project>/.opencode/skills/ask_scout` |
 
-**Pi naming:** directory and frontmatter `name` must use hyphens (`search-scout`), not underscores.
+**Pi naming:** directory and frontmatter `name` must use hyphens (`search-scout`, `add-memory`, `ask-scout`), not underscores.
 
-## Template
+## Templates
 
-Source: `skills/search_scout/` in repo root. Setup copies and replaces:
+Source: `skills/search_scout/`, `skills/add_memory/`, and `skills/ask_scout/` in repo root. Setup copies and replaces:
 
 - `{{SCOUT_API}}` → configured base URL (e.g. `http://127.0.0.1:8741/v1`)
 - `{{DEFAULT_SPACE}}` → space name from setup wizard

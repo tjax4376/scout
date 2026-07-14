@@ -1,6 +1,7 @@
 """Session embed runtime singleton for serve --embed.
 
 Metadata: v0.1.0 | Scout Contributors | 2026-06-14
+Change rationale: add-memory-api — integrate MemoryCache into SessionRuntime.
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ import logging
 from pathlib import Path
 
 from scout.config import ScoutConfig, validate_embed, validate_space
+from scout.memory.session_cache import MemoryCache
 from scout.prescan.runner import check_capacity, run_prescan
 from scout.session.file_cache import FileCache
 from scout.session.graph_cache import GraphCache
@@ -20,13 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 class SessionRuntime:
-    """Owns queue, worker, graph cache, and per-space session indexes."""
+    """Owns queue, worker, graph cache, memory cache, and per-space session indexes."""
 
     def __init__(self, home: Path, config: ScoutConfig) -> None:
         self.home = home
         self.config = config
         self.queue = EmbedQueue()
         self.graph_cache = GraphCache(home, config)
+        self._memory_caches: dict[str, MemoryCache] = {}
         self._file_caches: dict[str, FileCache] = {}
         self.worker = SessionEmbedWorker(
             home, config, self.queue, self.graph_cache, self._file_caches
@@ -71,6 +74,11 @@ class SessionRuntime:
             store.prepare_fresh()
             self._stores[space] = store
             logger.info("session index prepared for space %s", space)
+
+        for space in self.config.spaces:
+            cache = MemoryCache(self.home, space)
+            self._memory_caches[space] = cache
+            logger.info("memory cache ready for space %s", space)
 
         self._embed_ready = True
         self.worker.start()
@@ -129,3 +137,7 @@ class SessionRuntime:
         store.prepare_fresh()
         self._stores[space] = store
         self.worker.clear_space(space)
+
+    def memory_cache(self, space: str) -> MemoryCache | None:
+        """Get the memory cache for a space."""
+        return self._memory_caches.get(space)

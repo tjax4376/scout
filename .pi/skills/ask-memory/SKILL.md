@@ -30,13 +30,15 @@ Send `GET /v1/health` to the Scout API.
 When Scout is running, call the ask-memory endpoint with the user's prompt:
 
 ```bash
-curl -sk -X POST "https://192.168.40.163:8741/v1/spaces/{space}/memory/ask" \
+curl -sk -X POST "https://192.168.40.163:8741/v1/memory/ask" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $SCOUT_API_KEY" \
   -d '{
     "query": "<user prompt text>"
   }'
 ```
+
+Space-scoped alias `POST /v1/spaces/{space}/memory/ask` also works (same global store).
 
 #### Request fields
 
@@ -63,7 +65,7 @@ curl -sk -X POST "https://192.168.40.163:8741/v1/spaces/{space}/memory/ask" \
       "category": "category",
       "tags": ["tag1", "tag2"],
       "created_at": "2026-07-13T...",
-      "rel_path": "scout/memories/space/uuid.md"
+      "rel_path": "scout/memories/uuid.md"
     }
   ],
   "total": 3,

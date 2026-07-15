@@ -36,7 +36,7 @@ def test_recommend_categories_empty_list() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         home = Path(tmp)
-        categories = get_existing_categories(home, "test-space")
+        categories = get_existing_categories(home)
         assert categories == []
 
 

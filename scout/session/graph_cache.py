@@ -130,3 +130,7 @@ class GraphCache:
             for n in self._snapshots.get(space, {}).get("nodes", [])
             if n.get("rel_path") == rel_path
         ]
+
+    def reload_space(self, space: str) -> None:
+        """Reload one space snapshot from disk (e.g. after memory link)."""
+        self._load_space(space)

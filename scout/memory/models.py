@@ -16,6 +16,8 @@ class MemoryCreateRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=50000)
     tags: list[str] = Field(default_factory=list, max_length=20)
     category: str | None = Field(default=None, max_length=100)
+    # Optional: link mem-* into this space's graph.bin (omit = skip link)
+    link_space: str | None = Field(default=None, max_length=200)
 
 
 class MemoryResponse(BaseModel):

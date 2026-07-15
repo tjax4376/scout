@@ -1,6 +1,7 @@
 """Category recommendation for memories.
 
-Metadata: v0.1.0 | Scout Contributors | 2026-07-13
+Metadata: v0.2.0 | Scout Contributors | 2026-07-14
+Change rationale: global-memories-graph-index — categories from global store.
 """
 
 from __future__ import annotations
@@ -8,12 +9,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from scout.memory.storage import _memory_dir
+import yaml
+
+from scout.memory.storage import _memory_root
 
 
-def get_existing_categories(home: Path, space: str) -> list[str]:
-    """Return the set of existing category names from memory files in the space."""
-    mem_dir = _memory_dir(home, space)
+def get_existing_categories(home: Path) -> list[str]:
+    """Return category names from the global memory store."""
+    mem_dir = _memory_root(home)
     if not mem_dir.exists():
         return []
 
@@ -25,8 +28,6 @@ def get_existing_categories(home: Path, space: str) -> list[str]:
             if len(lines) < 3 or lines[0].strip() != "---":
                 continue
             fm_end = content.index("---", 3)
-            import yaml
-
             frontmatter = yaml.safe_load(content[3:fm_end]) or {}
             cat = frontmatter.get("category")
             if cat:
@@ -38,42 +39,28 @@ def get_existing_categories(home: Path, space: str) -> list[str]:
 
 
 def compute_overlap_score(text: str, category: str) -> float:
-    """Compute a keyword overlap score between text and a category name.
-
-    Uses word-boundary matching: counts how many words from the category
-    appear in the text. Normalized by category word count.
-    """
+    """Compute keyword overlap score between text and a category name."""
     text_lower = text.lower()
-    # Split category into words (handle hyphens, underscores)
     category_words = set(re.split(r"[-_\s]+", category.lower()))
     if not category_words or "" in category_words:
         return 0.0
 
-    # Count matching words
     matches = sum(1 for word in category_words if word in text_lower)
     return matches / len(category_words)
 
 
 def recommend_categories(
     home: Path,
-    space: str,
     title: str,
     body: str,
     max_suggestions: int = 3,
 ) -> list[str]:
-    """Recommend up to `max_suggestions` categories ranked by relevance.
-
-    Uses keyword overlap between title+body and existing category names.
-    Returns empty list if no categories exist or no overlap found.
-    """
-    categories = get_existing_categories(home, space)
+    """Recommend up to `max_suggestions` categories ranked by relevance."""
+    categories = get_existing_categories(home)
     if not categories:
         return []
 
     text = f"{title} {body}"
-    scored = [
-        (cat, compute_overlap_score(text, cat)) for cat in categories
-    ]
-    # Sort by score descending, return top N
+    scored = [(cat, compute_overlap_score(text, cat)) for cat in categories]
     scored.sort(key=lambda x: x[1], reverse=True)
     return [cat for cat, score in scored if score > 0][:max_suggestions]

@@ -80,3 +80,17 @@ The graph visualization page SHALL support URL query parameters `space`, `file`,
 - **WHEN** user opens `/graph?space=myapp&q=authenticate`
 - **THEN** the UI selects space `myapp` and runs symbol search for `authenticate`
 
+### Requirement: Cavern uses global memory store
+The Graph Cavern UI SHALL list and load memories from the canonical global memory endpoints (`GET /v1/memories`, `GET /v1/memory/{id}`). Space selection SHALL determine which space graph is used when fetching `mem-*` neighbors.
+
+#### Scenario: Cavern list shows global memories
+- **WHEN** user opens the Cavern tab with any valid space selected
+- **THEN** the UI lists memories from the global store
+
+### Requirement: Cavern memory neighbors from graph index
+When a memory is linked into the selected space’s graph, Cavern SHALL fetch neighbors via `GET /v1/spaces/{space}/node/mem-{id}/neighbors`. HTTP 404 SHALL indicate the memory is not linked in this space’s graph.
+
+#### Scenario: Linked memory shows neighbors
+- **WHEN** user opens a memory linked into the selected space graph that cites indexed files
+- **THEN** the UI displays neighbor nodes from the neighbors API response
+

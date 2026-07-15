@@ -1,10 +1,8 @@
-"""Graph integration for memory nodes.
+"""Graph integration for memory nodes (bincode via scout_core).
 
-Metadata: v0.1.0 | Scout Contributors | 2026-07-13
-Change rationale: add-memory-api — link memories into the scout graph.
-
-Note: Uses direct JSON modification of graph.bin (no Rust changes needed).
-# ponytail: graph.bin lock is file-level via fcntl; per-account locks if throughput matters
+Metadata: v0.2.0 | Scout Contributors | 2026-07-14
+Change rationale: global-memories-graph-index — py_load/save, Memory kind,
+outbound mem→target contains edges, relink after reindex.
 """
 
 from __future__ import annotations
@@ -15,25 +13,26 @@ import re
 from pathlib import Path
 from typing import Any
 
+import scout_core
+
 from scout.config import graph_bin_path
+from scout.memory.storage import _memory_root, _parse_memory_file, memory_rel_path
 
 logger = logging.getLogger("scout.memory.graph")
 
-# Node kinds that can be referenced by file path
 REFERENCABLE_KINDS = {"file", "module", "directory", "class", "function", "method"}
 
 
 def _load_graph_snapshot(path: Path) -> dict[str, Any]:
-    """Load graph.bin as a JSON dict."""
-    if not path.exists():
-        return {"nodes": [], "edges": [], "index_version": ""}
-    raw = path.read_text(encoding="utf-8")
+    """Load graph.bin via scout_core bincode → JSON snapshot dict."""
+    raw = scout_core.py_load_graph(str(path))
     return json.loads(raw)
 
 
 def _save_graph_snapshot(path: Path, snapshot: dict[str, Any]) -> None:
-    """Save graph.bin as formatted JSON."""
-    path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    """Save graph snapshot via scout_core (bincode)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scout_core.py_save_graph(str(path), json.dumps(snapshot))
 
 
 def _find_node_ids_by_path(
@@ -47,27 +46,27 @@ def _find_node_ids_by_path(
     ]
 
 
-def add_memory_node(
+def link_memory_into_graph(
     home: Path,
     space: str,
     memory_id: str,
     title: str,
     rel_path: str,
+    body: str,
 ) -> dict[str, Any] | None:
-    """Add a memory node to the graph index.
+    """Add mem-* node and outbound contains edges into space graph.bin.
 
-    Returns the created node dict, or None if graph.bin doesn't exist.
+    Returns summary dict, or None if graph.bin missing (non-fatal skip).
     """
     graph_path = graph_bin_path(home, space)
     if not graph_path.exists():
-        logger.info("graph.bin not found for space %s, skipping memory node", space)
+        logger.info("graph.bin not found for space %s, skipping memory link", space)
         return None
 
     snapshot = _load_graph_snapshot(graph_path)
-
-    # Create the memory node
+    node_id = f"mem-{memory_id}"
     node = {
-        "node_id": f"mem-{memory_id}",
+        "node_id": node_id,
         "kind": "memory",
         "symbol": title,
         "rel_path": rel_path,
@@ -76,14 +75,50 @@ def add_memory_node(
         "location_ref": "",
     }
 
-    # Avoid duplicates
     existing_ids = {n["node_id"] for n in snapshot.get("nodes", [])}
-    if node["node_id"] in existing_ids:
-        return node
+    if node_id not in existing_ids:
+        snapshot.setdefault("nodes", []).append(node)
+    else:
+        # Refresh title/path on existing memory node
+        for n in snapshot["nodes"]:
+            if n["node_id"] == node_id:
+                n["symbol"] = title
+                n["rel_path"] = rel_path
+                n["kind"] = "memory"
+                break
 
-    snapshot.setdefault("nodes", []).append(node)
+    paths = _extract_file_paths(body)
+    edges_added: list[dict[str, Any]] = []
+    existing_edges = {
+        (e["from_id"], e["to_id"], e["kind"]) for e in snapshot.get("edges", [])
+    }
+
+    for file_path in paths:
+        for to_id in _find_node_ids_by_path(snapshot, file_path):
+            edge = {
+                "from_id": node_id,
+                "to_id": to_id,
+                "kind": "contains",
+            }
+            key = (edge["from_id"], edge["to_id"], edge["kind"])
+            if key not in existing_edges:
+                snapshot.setdefault("edges", []).append(edge)
+                existing_edges.add(key)
+                edges_added.append(edge)
+
     _save_graph_snapshot(graph_path, snapshot)
-    return node
+    return {"node": node, "edges": edges_added}
+
+
+def add_memory_node(
+    home: Path,
+    space: str,
+    memory_id: str,
+    title: str,
+    rel_path: str,
+) -> dict[str, Any] | None:
+    """Add a memory node only (no body path edges). Prefers link_memory_into_graph."""
+    return link_memory_into_graph(home, space, memory_id, title, rel_path, body="")
 
 
 def link_memory_edges(
@@ -92,52 +127,64 @@ def link_memory_edges(
     memory_id: str,
     body: str,
 ) -> list[dict[str, Any]]:
-    """Create `contains` edges from referenced file nodes to the memory node.
-
-    Scans the memory body for file paths and creates edges from matching
-    graph nodes to the memory node.
-
-    Returns list of created edges.
-    """
+    """Create outbound contains edges from memory to cited file nodes."""
+    # Need title/rel_path from existing node or defaults
     graph_path = graph_bin_path(home, space)
     if not graph_path.exists():
         return []
-
+    title = memory_id
+    rel_path = memory_rel_path(memory_id)
     snapshot = _load_graph_snapshot(graph_path)
+    node_id = f"mem-{memory_id}"
+    for n in snapshot.get("nodes", []):
+        if n.get("node_id") == node_id:
+            title = n.get("symbol") or title
+            rel_path = n.get("rel_path") or rel_path
+            break
+    result = link_memory_into_graph(home, space, memory_id, title, rel_path, body)
+    if result is None:
+        return []
+    return list(result.get("edges") or [])
 
-    # Extract file paths from body (look for patterns like scout/api/app.py)
-    paths = _extract_file_paths(body)
-    edges: list[dict[str, Any]] = []
 
-    for file_path in paths:
-        node_ids = _find_node_ids_by_path(snapshot, file_path)
-        for from_id in node_ids:
-            edge = {
-                "from_id": from_id,
-                "to_id": f"mem-{memory_id}",
-                "kind": "contains",
-            }
-            # Avoid duplicate edges
-            existing_edges = {
-                (e["from_id"], e["to_id"], e["kind"])
-                for e in snapshot.get("edges", [])
-            }
-            if (edge["from_id"], edge["to_id"], edge["kind"]) not in existing_edges:
-                snapshot.setdefault("edges", []).append(edge)
-                edges.append(edge)
+def relink_all_memories(home: Path, space: str) -> int:
+    """Re-apply all global memories into a space graph after reindex.
 
-    if edges:
-        _save_graph_snapshot(graph_path, snapshot)
+    Returns number of memories successfully linked (including zero-edge links).
+    """
+    mem_dir = _memory_root(home)
+    if not mem_dir.exists():
+        return 0
+    graph_path = graph_bin_path(home, space)
+    if not graph_path.exists():
+        return 0
 
-    return edges
+    linked = 0
+    for md_file in sorted(mem_dir.glob("*.md")):
+        try:
+            content = md_file.read_text(encoding="utf-8")
+            frontmatter, body = _parse_memory_file(content)
+            memory_id = frontmatter.get("id")
+            if not memory_id:
+                continue
+            title = frontmatter.get("title") or memory_id
+            rel_path = memory_rel_path(memory_id)
+            result = link_memory_into_graph(
+                home, space, memory_id, title, rel_path, body
+            )
+            if result is not None:
+                linked += 1
+        except Exception:
+            logger.warning("relink failed for %s", md_file.name, exc_info=True)
+    return linked
 
 
 def _extract_file_paths(body: str) -> list[str]:
-    """Extract file paths from memory body text.
-
-    Looks for patterns like: scout/api/app.py, src/utils.py, etc.
-    """
-    # Match paths starting with a directory component and ending in .py/.ts/.js/.rs/.md
-    pattern = r"(?:^|\n)\s*(?:scout/|src/|lib/|tests/|app/|pkg/)[\w./-]+\.(?:py|ts|js|rs|md)"
-    matches = re.findall(pattern, body)
-    return [m.strip() for m in matches]
+    """Extract file paths from memory body text."""
+    if not body:
+        return []
+    pattern = (
+        r"(?:^|[\s`(\"'=])"
+        r"((?:scout/|src/|lib/|tests/|app/|pkg/)[\w./-]+\.(?:py|ts|js|rs|md))"
+    )
+    return list(dict.fromkeys(m.group(1) for m in re.finditer(pattern, body, re.M)))

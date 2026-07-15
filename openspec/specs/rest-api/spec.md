@@ -35,11 +35,15 @@ The system SHALL expose `GET /v1/spaces/{space}/node/{node_id}` returning node m
 - **THEN** the system returns node metadata and text
 
 ### Requirement: Graph neighbors endpoint
-The system SHALL expose `GET /v1/spaces/{space}/node/{node_id}/neighbors` for graph expansion without embed.
+The system SHALL expose `GET /v1/spaces/{space}/node/{node_id}/neighbors` for graph expansion without embed. When `node_id` is a linked memory node `mem-{memory_id}`, the system SHALL return outbound neighbors from the memory graph index (HTTP 200) rather than HTTP 404 solely because the node kind is memory.
 
 #### Scenario: Neighbor expansion
 - **WHEN** client sends `GET /v1/spaces/{space}/node/{node_id}/neighbors`
 - **THEN** the system returns connected graph nodes and edges
+
+#### Scenario: Neighbors for linked memory node
+- **WHEN** client sends `GET /v1/spaces/{space}/node/mem-{memory_id}/neighbors` for a memory linked into that space’s graph
+- **THEN** the system returns HTTP 200 with neighbor nodes and edges for cited graph targets
 
 ### Requirement: Symbols list endpoint
 The system SHALL expose `GET /v1/spaces/{space}/symbols` listing graph symbol nodes under an optional `path_prefix`.
@@ -101,45 +105,81 @@ The system SHALL serve graph visualization static assets from `/graph` on the sa
 - **WHEN** client requests `GET /graph/` or `GET /graph/index.html`
 - **THEN** the system returns the graph visualization HTML entry point
 
+### Requirement: Canonical global memory create endpoint
+The system SHALL expose `POST /v1/memory` accepting JSON with `title` (required), `body` (required), `tags` (optional array), `category` (optional), and `link_space` (optional). When `category` is omitted, the system SHALL return HTTP 409 with suggested categories from the global store. When provided, the system SHALL create a memory in the global store and return HTTP 201. When `link_space` is omitted, the system SHALL NOT link into any space graph.
+
+#### Scenario: Create memory globally with category
+- **WHEN** client sends `POST /v1/memory` with `title`, `body`, and `category`
+- **THEN** the system returns HTTP 201 with the created memory object from the global store
+
+#### Scenario: Create without link_space skips graph link
+- **WHEN** client sends `POST /v1/memory` without `link_space`
+- **THEN** the system creates the memory globally and does not add a `mem-*` node to any space graph
+
+### Requirement: Canonical global memory get endpoint
+The system SHALL expose `GET /v1/memory/{memory_id}` returning the full memory object from the global store.
+
+#### Scenario: Get existing global memory
+- **WHEN** client sends `GET /v1/memory/{memory_id}` for a valid ID
+- **THEN** the system returns HTTP 200 with the memory object
+
+#### Scenario: Get missing global memory
+- **WHEN** client sends `GET /v1/memory/{memory_id}` for an unknown ID
+- **THEN** the system returns HTTP 404
+
+### Requirement: Canonical global memories list endpoint
+The system SHALL expose `GET /v1/memories` with optional query parameters `category`, `tag` (repeatable), and `q` against the global store. The response SHALL include a `memories` array and `total` count.
+
+#### Scenario: List all global memories
+- **WHEN** client sends `GET /v1/memories` with no filters
+- **THEN** the system returns HTTP 200 with memories from the global store and `total` count
+
+### Requirement: Canonical global ask-memory endpoint
+The system SHALL expose `POST /v1/memory/ask` accepting JSON with `query` (required, string, min 1 char, max 5000 chars). The endpoint SHALL search the global memory store and return the most relevant memories as context.
+
+#### Scenario: Ask global store with query
+- **WHEN** client sends `POST /v1/memory/ask` with a non-empty query
+- **THEN** the system returns HTTP 200 with matching memories from the global store
+
 ### Requirement: Create memory endpoint
-The system SHALL expose `POST /v1/spaces/{space}/memory` accepting JSON with `title` (required), `body` (required), `tags` (optional array), and `category` (optional). When `category` is omitted, the system SHALL return HTTP 409 with suggested categories. When provided, the system SHALL create a memory file and return HTTP 201 with the memory object.
+The system SHALL expose `POST /v1/spaces/{space}/memory` as an alias that writes the **global** memory store. When `category` is omitted, the system SHALL return HTTP 409 with suggested categories from the global store. When provided, the system SHALL create a memory globally and return HTTP 201. The system SHALL default `link_space` to `{space}` for graph linking.
 
 #### Scenario: Create memory with category
 - **WHEN** client sends `POST /v1/spaces/{space}/memory` with `title`, `body`, and `category`
-- **THEN** the system returns HTTP 201 with the created memory object
+- **THEN** the system returns HTTP 201 with the created memory object stored globally
 
 #### Scenario: Create memory without category
 - **WHEN** client sends `POST /v1/spaces/{space}/memory` without `category`
 - **THEN** the system returns HTTP 409 with `suggested_categories` array
 
 ### Requirement: Get memory endpoint
-The system SHALL expose `GET /v1/spaces/{space}/memory/{memory_id}` returning the full memory object for an existing memory.
+The system SHALL expose `GET /v1/spaces/{space}/memory/{memory_id}` returning the full memory object for an existing memory in the **global** store (space path segment does not select a separate store).
 
 #### Scenario: Get existing memory
 - **WHEN** client sends `GET /v1/spaces/{space}/memory/{memory_id}` for a valid ID
-- **THEN** the system returns HTTP 200 with the memory object
+- **THEN** the system returns HTTP 200 with the memory object from the global store
 
 #### Scenario: Get non-existent memory
 - **WHEN** client sends `GET /v1/spaces/{space}/memory/{memory_id}` for an unknown ID
 - **THEN** the system returns HTTP 404
 
 ### Requirement: List memories endpoint
-The system SHALL expose `GET /v1/spaces/{space}/memories` with optional query parameters `category`, `tag` (repeatable), and `q` (full-text search). The response SHALL include a `memories` array and `total` count.
+The system SHALL expose `GET /v1/spaces/{space}/memories` with optional query parameters `category`, `tag` (repeatable), and `q` against the **global** memory store. The response SHALL include a `memories` array and `total` count.
 
 #### Scenario: List all memories
 - **WHEN** client sends `GET /v1/spaces/{space}/memories` with no filters
-- **THEN** the system returns HTTP 200 with a `memories` array and `total` count
+- **THEN** the system returns HTTP 200 with a `memories` array and `total` count from the global store
 
 #### Scenario: Filter by category
 - **WHEN** client sends `GET /v1/spaces/{space}/memories?category=api`
-- **THEN** the system returns only memories matching the category
+- **THEN** the system returns only global memories matching the category
 
 ### Requirement: Ask memory endpoint
-The system SHALL expose `POST /v1/spaces/{space}/memory/ask` accepting JSON with `query` (required, string, min 1 char, max 5000 chars). The endpoint SHALL search the space's memory store and return the most relevant memories as context. Returns HTTP 200 with `memories` array, `total` count, and echoed `query`. Returns HTTP 400 for empty query, HTTP 404 for unknown space.
+The system SHALL expose `POST /v1/spaces/{space}/memory/ask` accepting JSON with `query` (required, string, min 1 char, max 5000 chars). The endpoint SHALL search the **global** memory store and return the most relevant memories as context. Returns HTTP 200 with `memories` array, `total` count, and echoed `query`. Returns HTTP 400 for empty query, HTTP 404 for unknown space.
 
 #### Scenario: Ask with query returns relevant memories
 - **WHEN** client sends `POST /v1/spaces/{space}/memory/ask` with `{"query": "user preferences for code style"}`
-- **THEN** the system returns HTTP 200 with a `memories` array containing matching memories and a `total` count
+- **THEN** the system returns HTTP 200 with a `memories` array containing matching memories from the global store and a `total` count
 
 #### Scenario: Ask with empty query returns error
 - **WHEN** client sends `POST /v1/spaces/{space}/memory/ask` with `{"query": ""}`

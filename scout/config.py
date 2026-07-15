@@ -1,6 +1,7 @@
 """Space config and `.scout/` storage layout.
 
-Metadata: v0.1.0 | Scout Contributors | 2026-06-12
+Metadata: v0.2.0 | Scout Contributors | 2026-07-14
+Change rationale: tls-self-signed-tailscale — api.tls paths + https_required helpers
 """
 
 from __future__ import annotations
@@ -83,6 +84,14 @@ class RateLimitConfig:
 
 
 @dataclass
+class TlsConfig:
+    """Paths to PEM cert/key for scout serve (empty = use defaults under home/tls/)."""
+
+    certfile: str = ""
+    keyfile: str = ""
+
+
+@dataclass
 class ApiConfig:
     auth: AuthConfig = field(default_factory=AuthConfig)
     cors_origins: list[str] = field(
@@ -93,6 +102,7 @@ class ApiConfig:
     )
     force_https: bool = False
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+    tls: TlsConfig = field(default_factory=TlsConfig)
 
 
 @dataclass
@@ -171,6 +181,33 @@ def graph_bin_path(home: Path, space: str) -> Path:
     return home / "cache" / space / "graph.bin"
 
 
+def tls_dir(home: Path) -> Path:
+    """Directory for self-signed TLS materials (`cert.pem`, `key.pem`)."""
+    return home / "tls"
+
+
+def default_tls_cert_path(home: Path) -> Path:
+    return tls_dir(home) / "cert.pem"
+
+
+def default_tls_key_path(home: Path) -> Path:
+    return tls_dir(home) / "key.pem"
+
+
+def https_required(config: ScoutConfig) -> bool:
+    """True when serve must speak TLS (force_https or https api_base_url)."""
+    if config.api.force_https:
+        return True
+    return urlparse(config.api_base_url).scheme == "https"
+
+
+def _parse_tls_config(raw: dict[str, Any]) -> TlsConfig:
+    return TlsConfig(
+        certfile=str(raw.get("certfile", "") or ""),
+        keyfile=str(raw.get("keyfile", "") or ""),
+    )
+
+
 def _parse_auth_config(raw: dict[str, Any]) -> AuthConfig:
     return AuthConfig(
         enabled=bool(raw.get("enabled", False)),
@@ -186,6 +223,7 @@ def _parse_api_config(data: dict[str, Any]) -> ApiConfig:
     rate_raw = api_raw.get("rate_limit", {}) or {}
     cors = api_raw.get("cors_origins")
     origins = list(cors) if isinstance(cors, list) else None
+    tls_raw = api_raw.get("tls", {}) or {}
     return ApiConfig(
         auth=_parse_auth_config(auth_raw),
         cors_origins=origins
@@ -196,6 +234,7 @@ def _parse_api_config(data: dict[str, Any]) -> ApiConfig:
             search_per_minute=int(rate_raw.get("search_per_minute", 60) or 60),
             reindex_per_hour=int(rate_raw.get("reindex_per_hour", 3) or 3),
         ),
+        tls=_parse_tls_config(tls_raw if isinstance(tls_raw, dict) else {}),
     )
 
 
@@ -339,6 +378,10 @@ def save_config(home: Path, config: ScoutConfig) -> None:
         "rate_limit": {
             "search_per_minute": config.api.rate_limit.search_per_minute,
             "reindex_per_hour": config.api.rate_limit.reindex_per_hour,
+        },
+        "tls": {
+            "certfile": config.api.tls.certfile,
+            "keyfile": config.api.tls.keyfile,
         },
     }
     config_path(home).write_text(

@@ -121,6 +121,17 @@ async def run_reindex(
             str(manifest_path(home, space)),
             files_json,
         )
+
+        # Re-apply global memory nodes/edges into rebuilt graph.bin
+        try:
+            from scout.memory.graph import relink_all_memories
+
+            linked = relink_all_memories(home, space)
+            if linked:
+                ui.print(f"  relinked {linked} memories into graph")
+        except Exception as exc:
+            ui.print(f"[yellow]memory relink skipped[/yellow]: {exc}")
+
         ui.print(f"[green]Index complete[/green] (version {version})")
         return version
     finally:

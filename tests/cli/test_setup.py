@@ -243,9 +243,11 @@ def test_serve_uses_parsed_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
     captured: dict = {}
 
-    def fake_uvicorn(app, host, port, log_level):
+    def fake_uvicorn(app, host, port, log_level, **kwargs):
         captured["host"] = host
         captured["port"] = port
+        captured["ssl_certfile"] = kwargs.get("ssl_certfile")
+        captured["ssl_keyfile"] = kwargs.get("ssl_keyfile")
 
     monkeypatch.setattr(cli_main.uvicorn, "run", fake_uvicorn)
     monkeypatch.setattr(
@@ -258,3 +260,71 @@ def test_serve_uses_parsed_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert captured["host"] == "192.168.1.10"
     assert captured["port"] == 8741
+    assert captured["ssl_certfile"] is None
+
+
+def test_serve_https_required_without_certs_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    import scout.cli.main as cli_main
+    from scout.config import ApiConfig
+
+    config = ScoutConfig(
+        api_base_url="https://100.95.179.57:8741/v1",
+        api_port=8741,
+        api=ApiConfig(force_https=True),
+    )
+    home = Path("/tmp/.scout-tls-abort")
+    home.mkdir(parents=True, exist_ok=True)
+    pid_file = home / "scout.pid"
+    if pid_file.exists():
+        pid_file.unlink()
+
+    monkeypatch.setattr(cli_main, "bootstrap_scout_dir", lambda: home)
+    monkeypatch.setattr(cli_main, "load_config", lambda h: config)
+    monkeypatch.setattr(cli_main, "pid_path", lambda h: pid_file)
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main.main(["serve"])
+    assert exc.value.code == 1
+    assert not pid_file.exists()
+
+
+def test_serve_passes_tls_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import scout.cli.main as cli_main
+    from scout.config import ApiConfig, TlsConfig
+
+    cert = tmp_path / "cert.pem"
+    key = tmp_path / "key.pem"
+    cert.write_text("c")
+    key.write_text("k")
+    config = ScoutConfig(
+        api_base_url="https://100.95.179.57:8741/v1",
+        api_port=8741,
+        api=ApiConfig(
+            force_https=True,
+            tls=TlsConfig(certfile=str(cert), keyfile=str(key)),
+        ),
+    )
+    home = tmp_path / ".scout"
+    home.mkdir()
+    pid_file = home / "scout.pid"
+
+    monkeypatch.setattr(cli_main, "bootstrap_scout_dir", lambda: home)
+    monkeypatch.setattr(cli_main, "load_config", lambda h: config)
+    monkeypatch.setattr(cli_main, "pid_path", lambda h: pid_file)
+
+    captured: dict = {}
+
+    def fake_uvicorn(app, host, port, log_level, **kwargs):
+        captured.update(kwargs)
+        captured["host"] = host
+
+    monkeypatch.setattr(cli_main.uvicorn, "run", fake_uvicorn)
+    monkeypatch.setattr(
+        cli_main,
+        "create_app",
+        lambda embed_mode=False, warm_cache=True: MagicMock(),
+    )
+
+    cli_main.main(["serve"])
+    assert captured["ssl_certfile"] == str(cert.resolve())
+    assert captured["ssl_keyfile"] == str(key.resolve())

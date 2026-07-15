@@ -17,8 +17,31 @@ All `/v1` routes except optionally `GET /v1/health` require `Authorization: Bear
 | `api.force_https: true` | HTTP requests redirect to HTTPS (`301`) |
 | `SCOUT_FORCE_HTTPS=1` | Same as above via env |
 | Non-loopback `api_base_url` | Auto-enables `force_https`; `http://` LAN URLs upgraded to `https://` on load |
+| `api.tls.certfile` / `api.tls.keyfile` | PEM paths for uvicorn TLS (`scout serve`) |
+| `scout tls generate` | Self-signed cert+key under `~/.scout/tls/` (SAN: api host, localhost, Tailscale if detected) |
 
-Behind a TLS-terminating reverse proxy, set `X-Forwarded-Proto: https` so HSTS headers apply.
+**Required:** when HTTPS is required, `scout serve` **refuses** to start without certs. Do not advertise `https://` while listening plain HTTP.
+
+```bash
+scout tls generate
+scout serve
+# verify:
+curl -sk https://<tailscale-ip-or-magicdns>:8741/v1/health
+# Graph/Cavern UI:
+#   https://<host>:8741/graph/
+#   https://<host>:8741/graph/?tab=cavern
+```
+
+Self-signed trust: browsers show a warning (Advanced → proceed). Agents/API: `curl -k` or TLS verify disabled.
+
+#### Tailscale: passthrough vs terminate
+
+| Model | How | Scout bind |
+|-------|-----|------------|
+| **Passthrough (this feature)** | Client HTTPS → Tailnet → Scout TLS on `:8741` | `https://100.x` or MagicDNS in `api_base_url` + `scout tls generate` |
+| **Terminate at Tailscale** | `tailscale serve --bg http://127.0.0.1:8741` | `http://127.0.0.1:8741/v1`, `force_https: false` |
+
+Behind a TLS-terminating reverse proxy (terminate model), set `X-Forwarded-Proto: https` so HSTS headers apply.
 
 ## Routes
 
@@ -30,9 +53,14 @@ Behind a TLS-terminating reverse proxy, set `X-Forwarded-Proto: https` so HSTS h
 | POST | `/v1/spaces/{space}/search` | Embed query → scout_core search |
 | GET | `/v1/spaces/{space}/node/{node_id}` | Full chunk lookup |
 | POST | `/v1/spaces/{space}/reindex` | Sync rebuild, 409 if lock held |
-| POST | `/v1/spaces/{space}/memory` | Create memory; 409 if no category (recommends) |
-| GET | `/v1/spaces/{space}/memory/{id}` | Get memory by ID |
-| GET | `/v1/spaces/{space}/memories` | List/search memories (filters: category, tag, q) |
+| POST | `/v1/memory` | Create global memory; optional `link_space`; 409 if no category |
+| GET | `/v1/memory/{id}` | Get memory by ID (global store) |
+| GET | `/v1/memories` | List/search global memories (filters: category, tag, q) |
+| POST | `/v1/memory/ask` | Ask/search global memory store |
+| POST | `/v1/spaces/{space}/memory` | Alias → global create; default `link_space={space}` |
+| GET | `/v1/spaces/{space}/memory/{id}` | Alias → global get |
+| GET | `/v1/spaces/{space}/memories` | Alias → global list |
+| POST | `/v1/spaces/{space}/memory/ask` | Alias → global ask |
 
 Full request/response shapes: [`api-contracts.md`](../../api-contracts.md) at repo root.
 

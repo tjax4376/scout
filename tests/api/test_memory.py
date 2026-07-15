@@ -233,3 +233,69 @@ def test_ask_memory_response_format(api_client: TestClient) -> None:
     assert "tags" in mem
     assert "created_at" in mem
     assert "rel_path" in mem
+
+
+# ── Global memory store ────────────────────────────────────────────
+
+
+def test_global_create_list_get_ask(api_client: TestClient) -> None:
+    create = api_client.post(
+        "/v1/memory",
+        json={
+            "title": "Global Memory",
+            "body": "Shared across spaces.",
+            "category": "api",
+            "tags": ["global"],
+        },
+    )
+    assert create.status_code == 201
+    mid = create.json()["id"]
+    assert create.json()["rel_path"] == f"scout/memories/{mid}.md"
+
+    listed = api_client.get("/v1/memories")
+    assert listed.status_code == 200
+    assert any(m["id"] == mid for m in listed.json()["memories"])
+
+    # Alias list sees same global store
+    alias_list = api_client.get("/v1/spaces/test-space/memories")
+    assert alias_list.status_code == 200
+    assert any(m["id"] == mid for m in alias_list.json()["memories"])
+
+    detail = api_client.get(f"/v1/memory/{mid}")
+    assert detail.status_code == 200
+    assert detail.json()["title"] == "Global Memory"
+
+    ask = api_client.post("/v1/memory/ask", json={"query": "shared across"})
+    assert ask.status_code == 200
+    assert ask.json()["total"] >= 1
+
+
+def test_global_create_without_link_space_skips_graph(
+    api_client: TestClient, scout_home: Path
+) -> None:
+    create = api_client.post(
+        "/v1/memory",
+        json={
+            "title": "Unlinked",
+            "body": "src/auth.py\n",
+            "category": "api",
+        },
+    )
+    assert create.status_code == 201
+    mid = create.json()["id"]
+    # No graph.bin in this fixture usually — neighbors would 404 either way;
+    # assert flat file exists and no nested space dir used.
+    flat = scout_home / "scout" / "memories" / f"{mid}.md"
+    assert flat.exists()
+    assert not (scout_home / "scout" / "memories" / "test-space").exists()
+
+
+def test_alias_create_visible_on_global_list(api_client: TestClient) -> None:
+    create = api_client.post(
+        "/v1/spaces/test-space/memory",
+        json={"title": "Via Alias", "body": "Body.", "category": "config"},
+    )
+    assert create.status_code == 201
+    mid = create.json()["id"]
+    listed = api_client.get("/v1/memories", params={"category": "config"})
+    assert any(m["id"] == mid for m in listed.json()["memories"])

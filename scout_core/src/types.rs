@@ -14,6 +14,8 @@ pub enum NodeKind {
     Function,
     Method,
     Const,
+    /// Agent-contributed memory node (`mem-{uuid}` in graph.bin).
+    Memory,
 }
 
 impl NodeKind {
@@ -29,6 +31,7 @@ impl NodeKind {
             Self::Function => "function",
             Self::Method => "method",
             Self::Const => "const",
+            Self::Memory => "memory",
         }
     }
 
@@ -44,8 +47,53 @@ impl NodeKind {
             "function" => Some(Self::Function),
             "method" => Some(Self::Method),
             "const" => Some(Self::Const),
+            "memory" => Some(Self::Memory),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod node_kind_tests {
+    use super::*;
+
+    #[test]
+    fn memory_kind_round_trip_str() {
+        assert_eq!(NodeKind::Memory.as_str(), "memory");
+        assert_eq!(NodeKind::parse("memory"), Some(NodeKind::Memory));
+    }
+
+    #[test]
+    fn memory_kind_serde_json_round_trip() {
+        let node = GraphNodeData {
+            node_id: "mem-abc".into(),
+            kind: NodeKind::Memory,
+            symbol: Some("Title".into()),
+            rel_path: "scout/memories/abc.md".into(),
+            start_line: 0,
+            end_line: 0,
+            location_ref: String::new(),
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        assert!(json.contains("\"kind\":\"memory\""));
+        let back: GraphNodeData = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.kind, NodeKind::Memory);
+        assert_eq!(back.node_id, "mem-abc");
+
+        let snap = GraphSnapshot {
+            nodes: vec![node],
+            edges: vec![GraphEdgeData {
+                from_id: "mem-abc".into(),
+                to_id: "file-1".into(),
+                kind: EdgeKind::Contains,
+            }],
+            index_version: "test".into(),
+        };
+        let snap_json = serde_json::to_string(&snap).expect("snap serialize");
+        let snap_back: GraphSnapshot =
+            serde_json::from_str(&snap_json).expect("snap deserialize");
+        assert_eq!(snap_back.nodes[0].kind, NodeKind::Memory);
+        assert_eq!(snap_back.edges[0].kind, EdgeKind::Contains);
     }
 }
 

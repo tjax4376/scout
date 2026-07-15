@@ -1,7 +1,7 @@
 """Memory module — structured markdown memories for Scout's cavern.
 
-Metadata: v0.1.0 | Scout Contributors | 2026-07-13
-Change rationale: add-memory-api — agent-contributed knowledge storage.
+Metadata: v0.2.0 | Scout Contributors | 2026-07-14
+Change rationale: global-memories-graph-index — global flat store.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from scout.memory.storage import (
     create_memory_file,
     ensure_memory_dir,
     list_memory_files,
+    migrate_memories_to_global,
     read_memory_file,
 )
 
@@ -29,6 +30,7 @@ __all__ = [
     "ensure_memory_dir",
     "get_existing_categories",
     "list_memory_files",
+    "migrate_memories_to_global",
     "read_memory_file",
     "recommend_categories",
 ]
@@ -41,21 +43,17 @@ def demo() -> None:
 
     with tempfile.TemporaryDirectory() as tmp:
         home = Path(tmp)
-        space = "demo-space"
 
-        # Create
-        result = create_memory_file(home, space, "Demo", "Demo body.", "test", [])
+        result = create_memory_file(home, "Demo", "Demo body.", "test", [])
         assert result["title"] == "Demo"
         assert result["category"] == "test"
 
-        # Read
-        mem = read_memory_file(home, space, result["id"])
+        mem = read_memory_file(home, result["id"])
         assert mem is not None
         assert mem["title"] == "Demo"
         assert mem["body"] == "Demo body."
 
-        # List
-        memories = list_memory_files(home, space)
+        memories = list_memory_files(home)
         assert len(memories) == 1
 
         print("✓ memory demo passed")

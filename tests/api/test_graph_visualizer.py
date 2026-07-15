@@ -114,3 +114,63 @@ def test_graph_static_page(indexed_api_client: TestClient) -> None:
     resp = indexed_api_client.get("/graph/")
     assert resp.status_code == 200
     assert "Scout Graph" in resp.text
+    # Cavern tab (graph-webui-cavern)
+    assert 'data-tab="cavern"' in resp.text
+    assert ">Cavern<" in resp.text
+    assert 'id="memory-index"' in resp.text
+    assert 'id="linked-files-index"' in resp.text
+    assert 'id="memory-detail"' in resp.text
+    assert 'id="api-key"' in resp.text
+
+
+@requires_scout_core
+def test_cavern_list_get_neighbors_contract(
+    indexed_api_client: TestClient, indexed_space
+) -> None:
+    """Cavern WebUI flow: list memories → get detail → expand mem-* neighbors."""
+    space, _ = indexed_space
+    create = indexed_api_client.post(
+        f"/v1/spaces/{space}/memory",
+        json={
+            "title": "Auth notes",
+            "body": (
+                "Auth lives in workspace path:\n"
+                "src/auth.py\n"
+                "Use authenticate helpers carefully."
+            ),
+            "category": "api",
+            "tags": ["cavern"],
+        },
+    )
+    assert create.status_code == 201
+    memory = create.json()
+    memory_id = memory["id"]
+    assert memory["rel_path"] == f"scout/memories/{memory_id}.md"
+
+    # Canonical global list
+    listed = indexed_api_client.get("/v1/memories")
+    assert listed.status_code == 200
+    payload = listed.json()
+    assert payload["total"] >= 1
+    assert any(m["id"] == memory_id for m in payload["memories"])
+    listed_item = next(m for m in payload["memories"] if m["id"] == memory_id)
+    assert "body" not in listed_item or listed_item.get("body") is None
+
+    detail = indexed_api_client.get(f"/v1/memory/{memory_id}")
+    assert detail.status_code == 200
+    assert detail.json()["body"]
+    assert detail.json()["title"] == "Auth notes"
+
+    node_id = f"mem-{memory_id}"
+    neighbors = indexed_api_client.get(
+        f"/v1/spaces/{space}/node/{node_id}/neighbors",
+        params={"depth": 1, "max_nodes": 50},
+    )
+    assert neighbors.status_code == 200
+    data = neighbors.json()
+    assert data["node_id"] == node_id
+    assert "neighbors" in data
+    assert any(
+        (n.get("rel_path") == "src/auth.py") or ("auth" in (n.get("rel_path") or ""))
+        for n in data["neighbors"]
+    )

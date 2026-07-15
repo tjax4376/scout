@@ -9,6 +9,7 @@
   --file: #6bcb77;
   --function: #4dabf7;
   --class: #ffd43b;
+  --memory: #e599f7;
   --stale: #ff6b6b;
   --pane-width: 280px;
 }
@@ -44,11 +45,51 @@ body.resizing {
   font-weight: 600;
 }
 
+.mode-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.65rem;
+}
+
+.mode-tab {
+  font: inherit;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mode-tab:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.mode-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .controls {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem 1.25rem;
   align-items: end;
+}
+
+.graph-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: end;
+}
+
+.graph-controls.hidden,
+.cavern-pane.hidden,
+.hidden {
+  display: none !important;
 }
 
 .controls label {
@@ -294,6 +335,90 @@ body.resizing {
   border: 1px solid var(--border);
   border-radius: 4px;
   white-space: pre-wrap;
+}
+
+.cavern-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.cavern-section {
+  flex-shrink: 0;
+}
+
+.memory-index,
+.linked-files-index {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.memory-index {
+  max-height: 35vh;
+  overflow: auto;
+}
+
+.memory-index li,
+.linked-files-index li {
+  margin-bottom: 0.35rem;
+}
+
+.memory-index button,
+.linked-files-index button {
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.memory-index button:hover,
+.memory-index button.active,
+.memory-index button:focus,
+.linked-files-index button:hover {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.memory-index .memory-meta {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.memory-detail {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.memory-detail .memory-body {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 0.72rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+
+#memory-body-toggle {
+  margin-top: 0.4rem;
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
 }
 
 .graph-canvas {

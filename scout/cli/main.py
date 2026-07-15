@@ -1,7 +1,8 @@
-"""Scout CLI — setup, reindex, search, serve.
+"""Scout CLI — setup, reindex, search, serve, tls.
 
-Metadata: v0.1.0 | Scout Contributors | 2026-06-12
-Command shape: `scout <space> setup|reindex|search` and `scout serve`.
+Metadata: v0.2.0 | Scout Contributors | 2026-07-14
+Command shape: `scout <space> setup|reindex|search`, `scout serve`, `scout tls generate`.
+Change rationale: tls-self-signed-tailscale — TLS resolve + fail-loud HTTPS serve
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ from scout.prescan.runner import check_byte_cap, check_capacity, run_prescan
 from scout.setup.api_url import build_scout_api_url, parse_api_base_url
 from scout.setup.runner import run_setup
 from scout.serve.lifecycle import stop_serve
+from scout.tls.generate import OpenSslUnavailableError, generate_self_signed
+from scout.tls.resolve import resolve_tls_for_serve
 
 console = Console()
 
@@ -76,12 +79,14 @@ def _usage() -> None:
         "  scout <space> reindex [--force]\n"
         "  scout <space> search <query> [--top-k N]  # vector or graph path match\n"
         "  scout serve [--embed] [--no-warm-cache] [--certfile PATH] [--keyfile PATH]\n"
+        "  scout tls generate\n"
         "  scout stop-serve\n"
         "  scout version\n"
         "\n"
         "Examples:\n"
         "  scout myapp setup --agent cursor\n"
         "  scout myapp search \"auth handler\"\n"
+        "  scout tls generate\n"
         "  scout serve --embed\n"
         "  scout serve --certfile cert.pem --keyfile key.pem\n"
         "  scout stop-serve"
@@ -153,6 +158,15 @@ def _main_impl(argv: list[str] | None = None) -> None:
             i += 1
         home = bootstrap_scout_dir()
         config = load_config(home)
+        try:
+            tls = resolve_tls_for_serve(
+                home,
+                config,
+                certfile_flag=certfile,
+                keyfile_flag=keyfile,
+            )
+        except ValueError as exc:
+            cli_fail(str(exc))
         api_url = build_scout_api_url(config)
         endpoint = parse_api_base_url(api_url)
         pid_file = pid_path(home)
@@ -162,30 +176,67 @@ def _main_impl(argv: list[str] | None = None) -> None:
         pid_file.write_text(str(os.getpid()), encoding="utf-8")
         try:
             mode_label = " (embed)" if embed_mode else ""
-            console.print(f"[green]Serving{mode_label} on {api_url}[/green]")
-            graph_url = api_url.removesuffix("/v1")
-            if config.api.force_https:
-                graph_url = graph_url.replace("http://", "https://", 1)
-            graph_url = graph_url + "/graph"
+            # Banner scheme must match live listener
+            display_url = api_url
+            if tls.tls_enabled and display_url.startswith("http://"):
+                display_url = "https://" + display_url[len("http://") :]
+            elif not tls.tls_enabled and display_url.startswith("https://"):
+                # Should be unreachable — resolve_tls_for_serve aborts when HTTPS required
+                display_url = "http://" + display_url[len("https://") :]
+            console.print(f"[green]Serving{mode_label} on {display_url}[/green]")
+            graph_url = display_url.removesuffix("/v1") + "/graph"
             console.print(f"[green]Graph UI: {graph_url}[/green]")
             if config.api.auth.enabled:
                 console.print(
                     "[yellow]API auth enabled — send Authorization: Bearer "
                     "(SCOUT_API_KEY / SCOUT_ADMIN_KEY)[/yellow]"
                 )
-            if config.api.force_https:
+            if tls.tls_enabled:
+                console.print(
+                    f"[yellow]TLS enabled — cert {tls.certfile}[/yellow]"
+                )
+            elif config.api.force_https:
                 console.print("[yellow]HTTPS redirect enabled[/yellow]")
             uvicorn.run(
                 create_app(embed_mode=embed_mode, warm_cache=warm_cache),
                 host=endpoint.host,
                 port=endpoint.port,
                 log_level="info",
-                ssl_certfile=certfile,
-                ssl_keyfile=keyfile,
+                ssl_certfile=str(tls.certfile) if tls.certfile else None,
+                ssl_keyfile=str(tls.keyfile) if tls.keyfile else None,
             )
         finally:
             if pid_file.exists():
                 pid_file.unlink()
+        return
+
+    if args[0] == "tls":
+        if len(args) < 2 or args[1] in {"-h", "--help"}:
+            console.print("Usage: scout tls generate")
+            sys.exit(0 if len(args) > 1 and args[1] in {"-h", "--help"} else 1)
+        if args[1] != "generate":
+            cli_fail(f"unknown tls command: {args[1]} (try: scout tls generate)")
+        home = bootstrap_scout_dir()
+        config = load_config(home)
+        try:
+            cert_path, key_path = generate_self_signed(home, config)
+        except OpenSslUnavailableError as exc:
+            cli_fail(str(exc))
+        except RuntimeError as exc:
+            cli_fail(str(exc))
+        # Persist paths into config when empty so serve picks them up explicitly
+        if not config.api.tls.certfile and not config.api.tls.keyfile:
+            from scout.config import save_config
+
+            config.api.tls.certfile = str(cert_path)
+            config.api.tls.keyfile = str(key_path)
+            save_config(home, config)
+        console.print(f"[green]TLS cert:[/green] {cert_path}")
+        console.print(f"[green]TLS key:[/green]  {key_path}")
+        console.print(
+            "[dim]Self-signed — use curl -k / browser Advanced accept. "
+            "Then: scout serve[/dim]"
+        )
         return
 
     if args[0] == "stop-serve":

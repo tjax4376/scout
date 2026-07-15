@@ -29,7 +29,7 @@ class SessionRuntime:
         self.config = config
         self.queue = EmbedQueue()
         self.graph_cache = GraphCache(home, config)
-        self._memory_caches: dict[str, MemoryCache] = {}
+        self._memory_cache: MemoryCache | None = None
         self._file_caches: dict[str, FileCache] = {}
         self.worker = SessionEmbedWorker(
             home, config, self.queue, self.graph_cache, self._file_caches
@@ -75,10 +75,11 @@ class SessionRuntime:
             self._stores[space] = store
             logger.info("session index prepared for space %s", space)
 
-        for space in self.config.spaces:
-            cache = MemoryCache(self.home, space)
-            self._memory_caches[space] = cache
-            logger.info("memory cache ready for space %s", space)
+        self._memory_cache = MemoryCache(self.home)
+        logger.info(
+            "global memory cache ready (%d memories)",
+            self._memory_cache.stats().get("memory_count", 0),
+        )
 
         self._embed_ready = True
         self.worker.start()
@@ -138,6 +139,7 @@ class SessionRuntime:
         self._stores[space] = store
         self.worker.clear_space(space)
 
-    def memory_cache(self, space: str) -> MemoryCache | None:
-        """Get the memory cache for a space."""
-        return self._memory_caches.get(space)
+    def memory_cache(self, space: str | None = None) -> MemoryCache | None:
+        """Get the global memory cache (space arg ignored; kept for call-site compat)."""
+        _ = space
+        return self._memory_cache

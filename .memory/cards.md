@@ -48,11 +48,7 @@
 
 **Fix:** Send `Authorization: Bearer $SCOUT_API_KEY`. Admin routes (`reindex`, `DELETE session/index`) need `SCOUT_ADMIN_KEY`. Localhost dev: `api.auth.enabled: false` in `config.yaml` or unset `SCOUT_AUTH_ENABLED`. Setup generates keys in `api.auth` block.
 
-## Scout API auth (security-hardening)
-
-**Symptom:** `401 unauthorized` from Scout after upgrade.
-
-**Fix:** Send `Authorization: Bearer $SCOUT_API_KEY`. Admin routes (`reindex`, `DELETE session/index`) need `SCOUT_ADMIN_KEY`. Localhost dev: `api.auth.enabled: false` in `config.yaml` or unset `SCOUT_AUTH_ENABLED`. Setup generates keys in `api.auth` block.
+**Graph UI 401 on `/v1/spaces/list`:** Paste `api.auth.key` into Graph **API key** field (saved in browser localStorage). Hard refresh if assets cached. Key lives in `~/.scout/config.yaml` under `api.auth.key`.
 
 ## Scout API HTTPS redirect loop
 
@@ -66,7 +62,19 @@
 
 **Cause:** `scout serve` binds loopback from `api_base_url`.
 
-**Fix:** Keep Scout on localhost. On Scout host: `tailscale serve --bg http://127.0.0.1:8741`. Remote: `https://<hostname>.<tailnet>.ts.net/v1/health` (e.g. `https://evo-tjax.taild02f0a.ts.net/v1/health`) and `/graph/`. Auth still needs `Authorization: Bearer` from `~/.scout/config.yaml`. Disable: `tailscale serve reset`. Do **not** set `api_base_url` to Tailscale IP unless you want rebinding + TLS handling.
+**Fix (TLS terminate at Tailscale):** Keep Scout on localhost. On Scout host: `tailscale serve --bg http://127.0.0.1:8741`. Remote: `https://<hostname>.<tailnet>.ts.net/v1/health` and `/graph/`. Auth still needs `Authorization: Bearer` from `~/.scout/config.yaml`. Disable: `tailscale serve reset`. Set `api_base_url: http://127.0.0.1:8741/v1` and `force_https: false`.
+
+**Fix (HTTPS passthrough — Scout terminates TLS):** Prefer when `api_base_url` is `https://100.x…`. Run `scout tls generate` then `scout serve`. Open `https://<tailscale-ip|magicdns>:8741/graph/` (browser warns on self-signed; accept). Verify: `curl -sk https://<host>:8741/v1/health`.
+
+**MagicDNS 502:** `tailscale serve` was proxying `http://` to Scout HTTPS port. Fix: `tailscale serve reset && tailscale serve --bg https+insecure://100.95.179.57:8741` then open `https://evo-tjax.taild02f0a.ts.net/graph/` (Tailscale cert on :443; no self-signed warning).
+
+## Scout HTTPS advertised but TLS missing
+
+**Symptom:** `WARNING: Invalid HTTP request received.` / `curl: (35) wrong version number` / `301` then TLS failure. Banner shows `https://…` while uvicorn is plaintext HTTP.
+
+**Cause:** Non-loopback/`force_https` without `--certfile`/`--keyfile` or `~/.scout/tls/` certs.
+
+**Fix:** `scout tls generate` then restart `scout serve`. Or pass `--certfile`/`--keyfile`. Confirm banner prints `TLS enabled`. Do **not** open `https://` against a plaintext listener.
 
 ## Scout API rate limit 429
 
@@ -94,3 +102,13 @@
 **Cause:** Hybrid escalation bundle sent to external AI; model invents generic e-commerce patterns not grounded in indexed/diff scope.
 
 **Fix:** Verify every cited path exists before acting. Re-run with `hawkeye review --path <dir> --backend filesystem` and confirm file list. Prefer deterministic rule findings over hybrid advisory. If implementing fixes, confirm target repo path and open workspace to that project.
+
+## Cavern / global memories
+
+**Symptom (fixed):** `GET /v1/spaces/{space}/node/mem-{uuid}/neighbors` → `404` after opening memory in Cavern; or memories only in one space’s folder.
+
+**Cause (historical):** Per-space `scout/memories/{space}/`; `graph.py` wrote JSON into bincode `graph.bin`; no `NodeKind::Memory`; edges file→mem while BFS outbound-only.
+
+**Fix:** Global store at `{scout_home}/scout/memories/{id}.md`. Canonical API `/v1/memory`, `/v1/memories`, `/v1/memory/ask` (space routes = aliases; alias create links into that space). Link via `py_load_graph`/`py_save_graph`, `kind: memory`, outbound `contains` edges. Auto-migrate nested dirs on `scout serve`. Unscoped create without `link_space` skips graph link. Reindex calls `relink_all_memories`. Cavern lists `/v1/memories`; neighbors still per selected space.
+
+**Ops:** After upgrade run `scout serve` (migrate) then `scout <space> reindex` (or create via space alias) so `mem-*` appear. Do not hand-edit `graph.bin` as JSON.

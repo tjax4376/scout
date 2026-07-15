@@ -1,6 +1,7 @@
-"""In-memory memory cache for embed serve mode.
+"""In-memory memory cache for embed serve mode (global store).
 
-Metadata: v0.1.0 | Scout Contributors | 2026-07-13
+Metadata: v0.2.0 | Scout Contributors | 2026-07-14
+Change rationale: global-memories-graph-index — single global MemoryCache.
 """
 
 from __future__ import annotations
@@ -9,23 +10,22 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from scout.memory.storage import _parse_memory_file, _memory_dir
+from scout.memory.storage import _memory_root, _parse_memory_file, memory_rel_path
 
 logger = logging.getLogger("scout.memory.session_cache")
 
 
 class MemoryCache:
-    """Per-space in-memory memory cache for embed mode."""
+    """Global in-memory memory cache for embed mode."""
 
-    def __init__(self, home: Path, space: str) -> None:
+    def __init__(self, home: Path) -> None:
         self._home = home
-        self._space = space
         self._memories: dict[str, dict[str, Any]] = {}
         self._warm()
 
     def _warm(self) -> None:
         """Load existing memory files into the cache."""
-        mem_dir = _memory_dir(self._home, self._space)
+        mem_dir = _memory_root(self._home)
         if not mem_dir.exists():
             return
         for md_file in sorted(mem_dir.glob("*.md")):
@@ -34,15 +34,17 @@ class MemoryCache:
                 frontmatter, body = _parse_memory_file(content)
                 if not frontmatter.get("id"):
                     continue
-                self._memories[frontmatter["id"]] = {
-                    "id": frontmatter["id"],
-                    "title": frontmatter["title"],
+                mid = frontmatter["id"]
+                source = frontmatter.get("source_space") or frontmatter.get("space") or ""
+                self._memories[mid] = {
+                    "id": mid,
+                    "title": frontmatter.get("title", ""),
                     "body": body,
-                    "category": frontmatter["category"],
+                    "category": frontmatter.get("category", ""),
                     "tags": frontmatter.get("tags", []),
-                    "created_at": frontmatter["created_at"],
-                    "space": frontmatter["space"],
-                    "rel_path": f"scout/memories/{self._space}/{frontmatter['id']}.md",
+                    "created_at": frontmatter.get("created_at", ""),
+                    "space": source,
+                    "rel_path": memory_rel_path(mid),
                 }
             except Exception:
                 logger.warning("failed to warm memory %s", md_file.name, exc_info=True)

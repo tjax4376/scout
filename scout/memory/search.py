@@ -1,7 +1,7 @@
-"""Ask memory — search memories by natural language query.
+"""Ask memory — search global memories by natural language query.
 
-Metadata: v0.1.0 | Scout Contributors | 2026-07-13
-Change rationale: add-ask-memory-api — provide semantic search over memories.
+Metadata: v0.2.0 | Scout Contributors | 2026-07-14
+Change rationale: global-memories-graph-index — search global store.
 """
 
 from __future__ import annotations
@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scout.config import scout_home
-from scout.memory.storage import _memory_dir, _parse_memory_file
+from scout.memory.storage import _memory_root, _parse_memory_file, memory_rel_path
 
 logger = logging.getLogger("scout.memory.search")
 
@@ -28,36 +27,19 @@ class MemoryHit:
 
 def ask_memories(
     home: Path,
-    space: str,
     query: str,
     *,
     top_k: int = 10,
     embed_fn: Any = None,
 ) -> list[dict[str, Any]]:
-    """Search memories by query and return the most relevant ones.
-
-    Uses text-based search (keyword matching with BM25-like scoring).
-    In embed mode, pass `embed_fn` to enable vector similarity search.
-
-    Args:
-        home: Scout home directory.
-        space: Space name.
-        query: Natural language query.
-        top_k: Maximum number of results (default 10).
-        embed_fn: Optional callable(query: str) -> list[float] for vector embedding.
-                  If provided, uses vector similarity in embed mode.
-
-    Returns:
-        List of memory dicts sorted by relevance, up to top_k.
-    """
-    mem_dir = _memory_dir(home, space)
+    """Search global memories by query and return the most relevant ones."""
+    mem_dir = _memory_root(home)
     if not mem_dir.exists():
         return []
 
     query_lower = query.lower().strip()
     query_terms = _tokenize(query_lower)
 
-    # Collect all memories
     all_memories: list[dict[str, Any]] = []
     for md_file in sorted(mem_dir.glob("*.md")):
         try:
@@ -65,39 +47,37 @@ def ask_memories(
             frontmatter, body = _parse_memory_file(content)
             if not frontmatter.get("id"):
                 continue
-            all_memories.append({
-                "id": frontmatter["id"],
-                "title": frontmatter.get("title", ""),
-                "body": body,
-                "category": frontmatter.get("category", ""),
-                "tags": frontmatter.get("tags", []),
-                "created_at": frontmatter["created_at"],
-                "rel_path": f"scout/memories/{space}/{frontmatter['id']}.md",
-            })
+            mid = frontmatter["id"]
+            all_memories.append(
+                {
+                    "id": mid,
+                    "title": frontmatter.get("title", ""),
+                    "body": body,
+                    "category": frontmatter.get("category", ""),
+                    "tags": frontmatter.get("tags", []),
+                    "created_at": frontmatter.get("created_at", ""),
+                    "rel_path": memory_rel_path(mid),
+                }
+            )
         except Exception:
             logger.warning("failed to parse memory %s", md_file.name, exc_info=True)
 
     if not all_memories:
         return []
 
-    # Score and rank
     scored: list[MemoryHit] = []
     for mem in all_memories:
         score = _score_memory(mem, query, query_terms, embed_fn)
         if score > 0:
             scored.append(MemoryHit(memory=mem, score=score))
 
-    # Sort by score descending, limit to top_k
     scored.sort(key=lambda h: h.score, reverse=True)
-    results = scored[:top_k]
-
-    return [h.memory for h in results]
+    return [h.memory for h in scored[:top_k]]
 
 
 def _tokenize(text: str) -> set[str]:
     """Tokenize text into words, filtering short tokens."""
     words = re.findall(r"[a-z0-9]+", text)
-    # Filter out very short tokens (< 2 chars) and common stop words
     stop_words = {
         "the", "a", "an", "is", "are", "was", "were", "be", "been",
         "have", "has", "had", "do", "does", "did", "will", "would",
@@ -120,44 +100,34 @@ def _score_memory(
     query_terms: set[str],
     embed_fn: Any = None,
 ) -> float:
-    """Score a memory against the query.
-
-    Combines text-based scoring with optional vector similarity.
-    """
+    """Score a memory against the query."""
     title_lower = mem.get("title", "").lower()
     body_lower = mem.get("body", "").lower()
     combined = f"{title_lower} {body_lower}"
 
     score = 0.0
-
-    # --- Text-based scoring ---
-
-    # Exact phrase match (highest weight)
     query_clean = query.strip().lower()
     if query_clean in combined:
         score += 10.0
 
-    # Title matches
     for term in query_terms:
         if term in title_lower:
             score += 5.0
         if term in body_lower:
             score += 1.0
 
-    # Category match
     category = mem.get("category", "").lower()
     for term in query_terms:
         if term in category:
             score += 3.0
 
-    # --- Vector similarity (if embed_fn provided) ---
     if embed_fn is not None:
         try:
             query_vec = embed_fn(query)
             body_vec = embed_fn(mem.get("body", ""))
             if query_vec and body_vec:
                 vec_score = _cosine_similarity(query_vec, body_vec)
-                score += vec_score * 8.0  # weight vector score
+                score += vec_score * 8.0
         except Exception:
             logger.warning("vector embedding failed, falling back to text", exc_info=True)
 

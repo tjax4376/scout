@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Metadata: v0.3.1 | Scout Contributors | 2026-07-14 | change: graph-webui-api-key -->
   <title>Scout Graph</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="vendor/cytoscape.min.js"></script>
@@ -10,42 +11,94 @@
 <body>
   <header class="top-bar">
     <h1>Scout Graph</h1>
+    <nav class="mode-tabs" role="tablist" aria-label="Explorer mode">
+      <button
+        type="button"
+        id="tab-graph"
+        class="mode-tab active"
+        role="tab"
+        aria-selected="true"
+        aria-controls="graph-controls"
+        data-tab="graph"
+      >Graph</button>
+      <button
+        type="button"
+        id="tab-cavern"
+        class="mode-tab"
+        role="tab"
+        aria-selected="false"
+        aria-controls="cavern-pane"
+        data-tab="cavern"
+      >Cavern</button>
+    </nav>
     <div class="controls">
       <label>
         Space
         <select id="space-select" aria-label="Space"></select>
       </label>
       <label>
-        Symbol search
-        <input id="symbol-query" type="search" placeholder="function name…" />
-        <button id="symbol-search-btn" type="button">Search</button>
+        API key
+        <input
+          id="api-key"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="SCOUT_API_KEY"
+          aria-label="API key"
+        />
       </label>
-      <label>
-        File path
-        <input id="file-path" type="text" placeholder="src/auth.py" />
-        <button id="file-load-btn" type="button">Load</button>
-      </label>
+      <div id="graph-controls" class="graph-controls" role="tabpanel" aria-labelledby="tab-graph">
+        <label>
+          Symbol search
+          <input id="symbol-query" type="search" placeholder="function name…" />
+          <button id="symbol-search-btn" type="button">Search</button>
+        </label>
+        <label>
+          File path
+          <input id="file-path" type="text" placeholder="src/auth.py" />
+          <button id="file-load-btn" type="button">Load</button>
+        </label>
+      </div>
     </div>
     <div id="status-bar" class="status-bar">Ready</div>
   </header>
 
   <main class="layout">
     <aside id="tree-pane" class="tree-pane">
-      <section class="tree-section">
-        <h2>Functions</h2>
-        <div id="function-tree-status" class="tree-status" aria-live="polite"></div>
-        <ul id="function-tree" class="function-tree" role="tree" aria-label="Function tree"></ul>
-      </section>
-      <section>
-        <h2>Search hits</h2>
-        <ul id="hit-list" class="hit-list"></ul>
-      </section>
-      <section>
-        <h2>Node</h2>
-        <div id="node-detail" class="node-detail">Select a node</div>
-        <button id="preview-btn" type="button" disabled>Preview source</button>
-        <pre id="source-preview" class="source-preview"></pre>
-      </section>
+      <div id="graph-pane-panels">
+        <section class="tree-section">
+          <h2>Functions</h2>
+          <div id="function-tree-status" class="tree-status" aria-live="polite"></div>
+          <ul id="function-tree" class="function-tree" role="tree" aria-label="Function tree"></ul>
+        </section>
+        <section>
+          <h2>Search hits</h2>
+          <ul id="hit-list" class="hit-list"></ul>
+        </section>
+        <section>
+          <h2>Node</h2>
+          <div id="node-detail" class="node-detail">Select a node</div>
+          <button id="preview-btn" type="button" disabled>Preview source</button>
+          <pre id="source-preview" class="source-preview"></pre>
+        </section>
+      </div>
+
+      <div id="cavern-pane" class="cavern-pane hidden" role="tabpanel" aria-labelledby="tab-cavern" hidden>
+        <section class="cavern-section">
+          <h2>Memory index</h2>
+          <div id="cavern-index-status" class="tree-status" aria-live="polite"></div>
+          <ul id="memory-index" class="memory-index" role="listbox" aria-label="Memory index"></ul>
+        </section>
+        <section class="cavern-section">
+          <h2>Linked files</h2>
+          <ul id="linked-files-index" class="linked-files-index" aria-label="Linked files"></ul>
+        </section>
+        <section class="cavern-section">
+          <h2>Memory</h2>
+          <div id="memory-detail" class="memory-detail">Select a memory</div>
+          <button id="memory-body-toggle" type="button" class="hidden" hidden>Show full body</button>
+        </section>
+      </div>
     </aside>
     <div
       id="resize-handle"

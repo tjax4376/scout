@@ -27,9 +27,22 @@ Send `GET /v1/health` to the Scout API.
 
 ### 2. API mode: add memory directly
 
-When Scout is running, call the memory creation endpoint:
+When Scout is running, call the **canonical global** memory creation endpoint (space alias still works and links into that space's graph):
 
 ```bash
+# Canonical (global store; omits graph link unless link_space set)
+curl -s -X POST "{{SCOUT_API}}/memory" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SCOUT_API_KEY" \
+  -d '{
+    "title": "Memory title",
+    "body": "Memory body content",
+    "category": "optional-category",
+    "tags": ["tag1", "tag2"],
+    "link_space": "{{DEFAULT_SPACE}}"
+  }'
+
+# Alias (links into DEFAULT_SPACE graph by default)
 curl -s -X POST "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/memory" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $SCOUT_API_KEY" \
@@ -49,6 +62,7 @@ curl -s -X POST "{{SCOUT_API}}/spaces/{{DEFAULT_SPACE}}/memory" \
 | `body` | string | yes | Memory content (markdown supported) |
 | `category` | string | no | Category for organization; omit to get suggestions |
 | `tags` | string[] | no | Optional tags for filtering |
+| `link_space` | string | no | Space whose `graph.bin` receives `mem-*` links; omit on `/memory` to skip linking |
 
 #### Responses
 

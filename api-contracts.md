@@ -67,10 +67,14 @@ Security response headers (all routes): `X-Content-Type-Options`, `X-Frame-Optio
 | `GET` | `/v1/spaces/{space}/session/status` | Session embed queue/index stats (`scout serve --embed` only) |
 | `DELETE` | `/v1/spaces/{space}/session/index` | Clear session vector index (`scout serve --embed` only) |
 | `POST` | `/v1/spaces/{space}/reindex` | Synchronous full index rebuild |
-| `POST` | `/v1/spaces/{space}/memory` | Create structured memory |
-| `GET` | `/v1/spaces/{space}/memory/{memory_id}` | Get memory by ID |
-| `GET` | `/v1/spaces/{space}/memories` | List/search memories |
-| `POST` | `/v1/spaces/{space}/memory/ask` | Ask memory store for prompt context |
+| `POST` | `/v1/memory` | Create global memory (`link_space` optional) |
+| `GET` | `/v1/memory/{memory_id}` | Get memory by ID (global store) |
+| `GET` | `/v1/memories` | List/search global memories |
+| `POST` | `/v1/memory/ask` | Ask global memory store for prompt context |
+| `POST` | `/v1/spaces/{space}/memory` | Alias → global create; default `link_space={space}` |
+| `GET` | `/v1/spaces/{space}/memory/{memory_id}` | Alias → global get |
+| `GET` | `/v1/spaces/{space}/memories` | Alias → global list |
+| `POST` | `/v1/spaces/{space}/memory/ask` | Alias → global ask |
 
 ---
 
